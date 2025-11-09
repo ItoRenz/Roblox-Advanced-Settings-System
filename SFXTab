@@ -1,0 +1,845 @@
+--[[
+    ═══════════════════════════════════════════════
+    SFX TAB
+    ═══════════════════════════════════════════════
+    Author: ItoRenz00
+    Place in: StarterPlayer > StarterPlayerScripts > AdvancedSettings > Tabs > SFXTab
+    Type: ModuleScript
+    ═══════════════════════════════════════════════
+]]
+
+local SFXTab = {}
+
+-- ═══════════════════════════════════════════════
+-- SOUND IDS
+-- ═══════════════════════════════════════════════
+local UNYAH_JUMP_ID = "rbxassetid://115680913237541"
+local MARIO_JUMP_ID = "rbxassetid://6678636911"
+local EIGHTBIT_JUMP_ID = "rbxassetid://271111328"
+
+local CITCIT_WALK_ID = "rbxassetid://9125994773"
+local SQUIDWARD_WALK_ID = "rbxassetid://6929242058"
+local SPONGEBOB_WALK_ID = "rbxassetid://5948749731"
+local MRKRAB_WALK_ID = "rbxassetid://3426632334"
+
+-- ═══════════════════════════════════════════════
+-- STATE VARIABLES
+-- ═══════════════════════════════════════════════
+local player = game.Players.LocalPlayer
+local character = player.Character or player.CharacterAdded:Wait()
+local humanoid = character:WaitForChild("Humanoid")
+local rootPart = character:WaitForChild("HumanoidRootPart")
+
+local jumpSound = nil
+local walkSound = nil
+local defaultJumpSound = nil
+local defaultFootstepSound = nil
+
+local jumpEnabled = true
+local walkEnabled = true
+local isWalking = false
+local isJumping = false
+local lastJumpTime = 0
+local MIN_JUMP_INTERVAL = 0.05
+local currentJumpSound = "UNYAH"
+local currentWalkSound = "CITCIT"
+local allSoundsEnabled = true
+
+-- Connection variables
+local jumpConnection = nil
+local runConnection = nil
+local stateConnection = nil
+local heartbeatConnection = nil
+
+-- UI References
+local jumpMasterToggle = nil
+local walkMasterToggle = nil
+local jumpToggleButtons = {}
+local walkToggleButtons = {}
+
+-- ═══════════════════════════════════════════════
+-- SOUND MANAGEMENT
+-- ═══════════════════════════════════════════════
+local function hideDefaultSounds(char)
+    if char:FindFirstChild("Jump") then
+        defaultJumpSound = char:FindFirstChild("Jump")
+        defaultJumpSound.Volume = 0
+    end
+    if humanoid:FindFirstChild("Jump") then
+        defaultJumpSound = humanoid:FindFirstChild("Jump")
+        defaultJumpSound.Volume = 0
+    end
+    
+    for _, sound in pairs(char:GetDescendants()) do
+        if sound:IsA("Sound") and (sound.Name == "Footstep" or sound.Name == "Running") then
+            defaultFootstepSound = sound
+            defaultFootstepSound.Volume = 0
+        end
+    end
+    
+    for _, sound in pairs(humanoid:GetChildren()) do
+        if sound:IsA("Sound") and (sound.Name == "Footstep" or sound.Name == "Running") then
+            defaultFootstepSound = sound
+            defaultFootstepSound.Volume = 0
+        end
+    end
+end
+
+local function setupCustomSounds()
+    if jumpSound then jumpSound:Destroy() end
+    if walkSound then walkSound:Destroy() end
+    
+    local currentJumpId = currentJumpSound == "UNYAH" and UNYAH_JUMP_ID or
+                          (currentJumpSound == "MARIO" and MARIO_JUMP_ID or EIGHTBIT_JUMP_ID)
+    
+    -- Get volume from AudioManager if available
+    local sfxVolume = 1
+    if _G.AdvancedSettings and _G.AdvancedSettings.AudioManager then
+        local audioMgr = _G.AdvancedSettings.AudioManager
+        sfxVolume = (audioMgr.masterVolume / 10) * (audioMgr.sfxVolume / 10)
+    end
+    
+    jumpSound = Instance.new("Sound")
+    jumpSound.Name = "CustomJump"
+    jumpSound.SoundId = currentJumpId
+    jumpSound.Volume = sfxVolume
+    jumpSound.Looped = false
+    jumpSound.Parent = rootPart
+    
+    local currentSoundId = currentWalkSound == "CITCIT" and CITCIT_WALK_ID or
+                           (currentWalkSound == "SQUIDWARD" and SQUIDWARD_WALK_ID or 
+                           (currentWalkSound == "SPONGEBOB" and SPONGEBOB_WALK_ID or MRKRAB_WALK_ID))
+    
+    walkSound = Instance.new("Sound")
+    walkSound.Name = "CustomFootstep"
+    walkSound.SoundId = currentSoundId
+    walkSound.Volume = sfxVolume
+    walkSound.Looped = true
+    walkSound.PlaybackSpeed = 1
+    walkSound.RollOffMaxDistance = 100
+    walkSound.RollOffMinDistance = 10
+    walkSound.Parent = rootPart
+end
+
+-- ═══════════════════════════════════════════════
+-- EVENT HANDLERS
+-- ═══════════════════════════════════════════════
+local function onJump(jumping)
+    if not jumping then return end
+    
+    local currentTime = tick()
+    if currentTime - lastJumpTime < MIN_JUMP_INTERVAL then return end
+    
+    lastJumpTime = currentTime
+    
+    if jumpEnabled and allSoundsEnabled then
+        if jumpSound and jumpSound.IsPlaying then
+            jumpSound:Stop()
+        end
+        
+        if defaultJumpSound then
+            defaultJumpSound.Volume = 0
+        end
+        
+        if jumpSound then
+            task.spawn(function()
+                jumpSound.TimePosition = 0
+                jumpSound:Play()
+            end)
+        end
+    elseif defaultJumpSound then
+        defaultJumpSound.Volume = 1
+    end
+end
+
+local function updateWalkSoundSpeed(speed)
+    if not walkSound then return end
+    
+    -- Adjust playback speed based on character speed
+    local baseSpeed = 16 -- Default Roblox walk speed
+    local currentSpeed = humanoid.WalkSpeed or baseSpeed
+    
+    -- Calculate speed multiplier based on actual movement speed
+    local speedRatio = speed / currentSpeed
+    
+    -- Clamp the playback speed between reasonable values
+    -- Minimum 0.5x (very slow walk), Maximum 2.0x (sprint)
+    local playbackSpeed = math.clamp(0.5 + (speedRatio * 1.5), 0.5, 2.0)
+    
+    -- Smooth transition to avoid jarring speed changes
+    if walkSound.PlaybackSpeed ~= playbackSpeed then
+        game:GetService("TweenService"):Create(
+            walkSound,
+            TweenInfo.new(0.1, Enum.EasingStyle.Linear),
+            {PlaybackSpeed = playbackSpeed}
+        ):Play()
+    end
+end
+
+local function ensureSoundPlaying()
+    if walkEnabled and allSoundsEnabled and isWalking and not isJumping then
+        if walkSound and not walkSound.IsPlaying then
+            walkSound:Play()
+        end
+    elseif walkSound and walkSound.IsPlaying then
+        walkSound:Stop()
+    end
+end
+
+local function handleWalking(speed)
+    if not allSoundsEnabled or not walkEnabled then
+        isWalking = false
+        if walkSound and walkSound.IsPlaying then
+            walkSound:Stop()
+        end
+        if defaultFootstepSound then
+            defaultFootstepSound.Volume = not allSoundsEnabled and 1 or 0
+        end
+        return
+    end
+    
+    if speed > 2 and humanoid.FloorMaterial ~= Enum.Material.Air then
+        isWalking = true
+        if defaultFootstepSound then
+            defaultFootstepSound.Volume = 0
+        end
+        
+        -- Update sound speed based on movement speed
+        updateWalkSoundSpeed(speed)
+        
+        if walkSound and not walkSound.IsPlaying and not isJumping then
+            walkSound:Play()
+        end
+    else
+        isWalking = false
+        if walkSound and walkSound.IsPlaying then
+            walkSound:Stop()
+        end
+    end
+end
+
+local function handleStateChanged(oldState, newState)
+    if newState == Enum.HumanoidStateType.Jumping or newState == Enum.HumanoidStateType.Freefall then
+        isJumping = true
+        if walkSound and walkSound.IsPlaying then
+            walkSound:Stop()
+        end
+    elseif newState == Enum.HumanoidStateType.Landed then
+        isJumping = false
+        if isWalking and walkEnabled and allSoundsEnabled and walkSound then
+            walkSound:Play()
+        end
+    end
+end
+
+-- ═══════════════════════════════════════════════
+-- CONTENT CREATION
+-- ═══════════════════════════════════════════════
+function SFXTab.createContent(parent, Colors, isMobile, Utils)
+    -- Add padding to parent untuk spacing dari edge
+    local padding = Instance.new("UIPadding")
+    padding.PaddingLeft = UDim.new(0, isMobile and 8 or 12)
+    padding.PaddingRight = UDim.new(0, isMobile and 8 or 12)
+    padding.PaddingTop = UDim.new(0, isMobile and 8 or 12)
+    padding.PaddingBottom = UDim.new(0, isMobile and 16 or 20)
+    padding.Parent = parent
+    
+    -- Anti horizontal scroll
+    if parent:IsA("ScrollingFrame") then
+        parent.ScrollBarThickness = isMobile and 4 or 6
+        parent.CanvasSize = UDim2.new(0, 0, 0, 0) -- Will be updated later
+        parent.ScrollingDirection = Enum.ScrollingDirection.Y -- Only vertical scroll
+        parent.HorizontalScrollBarInset = Enum.ScrollBarInset.None
+        parent.VerticalScrollBarInset = Enum.ScrollBarInset.ScrollBar
+    end
+    
+    -- Helper function untuk create card
+    local function createCard(cardParent, title)
+        local card = Instance.new("Frame")
+        card.Name = title .. "Card"
+        card.Size = UDim2.new(1, -16, 0, isMobile and 38 or 50)
+        card.BackgroundColor3 = Colors.card
+        card.BackgroundTransparency = 0.5
+        card.BorderSizePixel = 0
+        card.ZIndex = 202
+        card.Parent = cardParent
+        Utils.corner(card, 10)
+        
+        local stroke = Instance.new("UIStroke")
+        stroke.Color = Colors.divider
+        stroke.Thickness = 1
+        stroke.Transparency = 0.6
+        stroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
+        stroke.Parent = card
+        
+        local titleLabel = Instance.new("TextLabel")
+        titleLabel.Size = UDim2.new(1, -70, 1, 0)
+        titleLabel.Position = UDim2.new(0, isMobile and 8 or 15, 0, 0)
+        titleLabel.BackgroundTransparency = 1
+        titleLabel.Text = title
+        titleLabel.TextColor3 = Colors.text
+        titleLabel.Font = Enum.Font.GothamBold
+        titleLabel.TextSize = isMobile and 10 or 13
+        titleLabel.TextXAlignment = Enum.TextXAlignment.Left
+        titleLabel.TextYAlignment = Enum.TextYAlignment.Center
+        titleLabel.ZIndex = 203
+        titleLabel.Parent = card
+        
+        return card, stroke
+    end
+    
+    -- Helper function untuk create card with description
+    local function createCardWithDesc(cardParent, title, desc)
+        local card = Instance.new("Frame")
+        card.Name = title .. "Card"
+        card.Size = UDim2.new(1, -8, 0, isMobile and 60 or 75)
+        card.BackgroundColor3 = Colors.card
+        card.BackgroundTransparency = 0.5
+        card.BorderSizePixel = 0
+        card.ZIndex = 202
+        card.Parent = cardParent
+        Utils.corner(card, 10)
+        
+        local stroke = Instance.new("UIStroke")
+        stroke.Color = Colors.divider
+        stroke.Thickness = 1
+        stroke.Transparency = 0.6
+        stroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
+        stroke.Parent = card
+        
+        local textContainer = Instance.new("Frame")
+        textContainer.Size = UDim2.new(1, -70, 1, 0)
+        textContainer.Position = UDim2.new(0, isMobile and 8 or 15, 0, 0)
+        textContainer.BackgroundTransparency = 1
+        textContainer.ZIndex = 203
+        textContainer.Parent = card
+        
+        local titleLabel = Instance.new("TextLabel")
+        titleLabel.Size = UDim2.new(1, 0, 0, isMobile and 16 or 20)
+        titleLabel.Position = UDim2.new(0, 0, 0, isMobile and 8 or 12)
+        titleLabel.BackgroundTransparency = 1
+        titleLabel.Text = title
+        titleLabel.TextColor3 = Colors.text
+        titleLabel.Font = Enum.Font.GothamBold
+        titleLabel.TextSize = isMobile and 10 or 13
+        titleLabel.TextXAlignment = Enum.TextXAlignment.Left
+        titleLabel.ZIndex = 204
+        titleLabel.Parent = textContainer
+        
+        local descLabel = Instance.new("TextLabel")
+        descLabel.Size = UDim2.new(1, 0, 0, isMobile and 32 or 38)
+        descLabel.Position = UDim2.new(0, 0, 0, isMobile and 24 or 32)
+        descLabel.BackgroundTransparency = 1
+        descLabel.Text = desc
+        descLabel.TextColor3 = Colors.textDark
+        descLabel.Font = Enum.Font.Gotham
+        descLabel.TextSize = isMobile and 8 or 11
+        descLabel.TextXAlignment = Enum.TextXAlignment.Left
+        descLabel.TextYAlignment = Enum.TextYAlignment.Top
+        descLabel.TextWrapped = true
+        descLabel.ZIndex = 204
+        descLabel.Parent = textContainer
+        
+        return card, stroke
+    end
+    
+    -- Helper function untuk create toggle button
+    local function createToggleButton(toggleParent)
+        local toggleBg = Instance.new("Frame")
+        toggleBg.Size = UDim2.new(0, isMobile and 32 or 38, 0, isMobile and 16 or 20)
+        toggleBg.Position = UDim2.new(1, isMobile and -36 or -50, 0.5, isMobile and -8 or -10)
+        toggleBg.BackgroundColor3 = Colors.toggleOn
+        toggleBg.BorderSizePixel = 0
+        toggleBg.ZIndex = 203
+        toggleBg.Parent = toggleParent
+        Utils.corner(toggleBg, 10)
+        
+        local toggleStroke = Instance.new("UIStroke")
+        toggleStroke.Color = Colors.divider
+        toggleStroke.Thickness = 1
+        toggleStroke.Transparency = 0.7
+        toggleStroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
+        toggleStroke.Parent = toggleBg
+        
+        local knob = Instance.new("Frame")
+        knob.Size = UDim2.new(0, isMobile and 12 or 16, 0, isMobile and 12 or 16)
+        knob.Position = UDim2.new(1, isMobile and -14 or -18, 0.5, isMobile and -6 or -8)
+        knob.BackgroundColor3 = Colors.text
+        knob.BorderSizePixel = 0
+        knob.ZIndex = 204
+        knob.Parent = toggleBg
+        Utils.corner(knob, 8)
+        
+        local btn = Instance.new("TextButton")
+        btn.Size = UDim2.new(1, 0, 1, 0)
+        btn.BackgroundTransparency = 1
+        btn.Text = ""
+        btn.ZIndex = 205
+        btn.Parent = toggleBg
+        
+        return toggleBg, knob, toggleStroke, btn
+    end
+    
+    -- Helper function untuk create divider
+    local function createDivider(orderNum)
+        local dividerFrame = Instance.new("Frame")
+        dividerFrame.Name = "DividerFrame"
+        dividerFrame.Size = UDim2.new(1, -16, 0, isMobile and 12 or 15)
+        dividerFrame.BackgroundTransparency = 1
+        dividerFrame.BorderSizePixel = 0
+        dividerFrame.ZIndex = 202
+        dividerFrame.LayoutOrder = orderNum
+        dividerFrame.Parent = parent
+        
+        local line = Instance.new("Frame")
+        line.Size = UDim2.new(1, -40, 0, 1)
+        line.Position = UDim2.new(0, 20, 0.5, 0)
+        line.AnchorPoint = Vector2.new(0, 0.5)
+        line.BackgroundColor3 = Colors.divider
+        line.BackgroundTransparency = 0.6
+        line.BorderSizePixel = 0
+        line.ZIndex = 202
+        line.Parent = dividerFrame
+        
+        return dividerFrame
+    end
+    
+    -- Helper function untuk create section header
+    local function createSectionHeader(text, orderNum)
+        local header = Instance.new("Frame")
+        header.Name = text .. "Header"
+        header.Size = UDim2.new(1, -16, 0, isMobile and 32 or 40)
+        header.BackgroundTransparency = 1
+        header.BorderSizePixel = 0
+        header.ZIndex = 202
+        header.LayoutOrder = orderNum
+        header.Parent = parent
+        
+        local label = Instance.new("TextLabel")
+        label.Size = UDim2.new(1, -40, 1, 0)
+        label.Position = UDim2.new(0, isMobile and 8 or 15, 0, 0)
+        label.BackgroundTransparency = 1
+        label.Text = text
+        label.TextColor3 = Colors.accent
+        label.Font = Enum.Font.GothamBold
+        label.TextSize = isMobile and 12 or 16
+        label.TextXAlignment = Enum.TextXAlignment.Left
+        label.TextYAlignment = Enum.TextYAlignment.Center
+        label.ZIndex = 203
+        label.Parent = header
+        
+        local line = Instance.new("Frame")
+        line.Size = UDim2.new(1, -40, 0, 2)
+        line.Position = UDim2.new(0, 20, 1, -3)
+        line.BackgroundColor3 = Colors.accent
+        line.BackgroundTransparency = 0.7
+        line.BorderSizePixel = 0
+        line.ZIndex = 202
+        line.Parent = header
+        Utils.corner(line, 1)
+        
+        return header
+    end
+    
+    -- Helper function untuk create sound toggle
+    local function createSoundToggle(toggleParent, title, posY)
+        local card = Instance.new("Frame")
+        card.Size = UDim2.new(1, -32, 0, isMobile and 38 or 50)
+        card.Position = UDim2.new(0, 16, 0, posY)
+        card.BackgroundColor3 = Colors.card
+        card.BackgroundTransparency = 0.85
+        card.BorderSizePixel = 0
+        card.ZIndex = 202
+        card.Parent = toggleParent
+        Utils.corner(card, 8)
+        
+        local titleLabel = Instance.new("TextLabel")
+        titleLabel.Size = UDim2.new(1, isMobile and -48 or -62, 1, 0)
+        titleLabel.Position = UDim2.new(0, isMobile and 10 or 12, 0, 0)
+        titleLabel.BackgroundTransparency = 1
+        titleLabel.Text = title
+        titleLabel.TextColor3 = Colors.text
+        titleLabel.Font = Enum.Font.GothamMedium
+        titleLabel.TextSize = isMobile and 10 or 13
+        titleLabel.TextXAlignment = Enum.TextXAlignment.Left
+        titleLabel.TextYAlignment = Enum.TextYAlignment.Center
+        titleLabel.ZIndex = 203
+        titleLabel.Parent = card
+        
+        local toggleBg, knob, toggleStroke, btn = createToggleButton(card)
+        
+        return card, toggleBg, knob, toggleStroke, btn
+    end
+    
+    -- ═══════════════════════════════════════════════
+    -- MASTER TOGGLE
+    -- ═══════════════════════════════════════════════
+    local masterCard, masterStroke = createCardWithDesc(
+        parent, 
+        "All Custom Sounds", 
+        "Turn OFF to disable all custom sound effects and use default Roblox sounds"
+    )
+    masterCard.LayoutOrder = 1
+    
+    local masterToggle, masterKnob, masterToggleStroke, masterBtn = createToggleButton(masterCard)
+    masterToggle.BackgroundColor3 = allSoundsEnabled and Colors.toggleOn or Colors.toggleOff
+    masterToggleStroke.Color = allSoundsEnabled and Colors.accent or Colors.divider
+    masterToggleStroke.Transparency = allSoundsEnabled and 0 or 0.7
+    masterKnob.Position = allSoundsEnabled and UDim2.new(1, isMobile and -14 or -18, 0.5, isMobile and -6 or -8) or UDim2.new(0, 2, 0.5, isMobile and -6 or -8)
+    
+    masterBtn.MouseButton1Click:Connect(function()
+        allSoundsEnabled = not allSoundsEnabled
+        
+        Utils.tween(masterToggle, TweenInfo.new(0.2), {
+            BackgroundColor3 = allSoundsEnabled and Colors.toggleOn or Colors.toggleOff
+        })
+        
+        Utils.tween(masterToggleStroke, TweenInfo.new(0.2), {
+            Color = allSoundsEnabled and Colors.accent or Colors.divider,
+            Transparency = allSoundsEnabled and 0 or 0.7
+        })
+        
+        Utils.tween(masterKnob, TweenInfo.new(0.2, Enum.EasingStyle.Quad), {
+            Position = allSoundsEnabled and UDim2.new(1, isMobile and -14 or -18, 0.5, isMobile and -6 or -8) or UDim2.new(0, 2, 0.5, isMobile and -6 or -8)
+        })
+        
+        if not allSoundsEnabled then
+            if jumpSound and jumpSound.IsPlaying then jumpSound:Stop() end
+            if walkSound and walkSound.IsPlaying then walkSound:Stop() end
+            if defaultJumpSound then defaultJumpSound.Volume = 1 end
+            if defaultFootstepSound then defaultFootstepSound.Volume = 1 end
+        else
+            if defaultJumpSound then defaultJumpSound.Volume = 0 end
+            if defaultFootstepSound then defaultFootstepSound.Volume = 0 end
+            if isWalking and walkEnabled and walkSound then
+                walkSound:Play()
+            end
+        end
+    end)
+    
+    masterCard.MouseEnter:Connect(function()
+        Utils.tween(masterCard, TweenInfo.new(0.15), {BackgroundTransparency = 0.3})
+    end)
+    
+    masterCard.MouseLeave:Connect(function()
+        Utils.tween(masterCard, TweenInfo.new(0.15), {BackgroundTransparency = 0.5})
+    end)
+    
+    -- Divider
+    createDivider(2)
+    
+    -- ═══════════════════════════════════════════════
+    -- JUMP SOUNDS SECTION
+    -- ═══════════════════════════════════════════════
+    createSectionHeader("🎵 JUMP SOUNDS", 3)
+    
+    local jumpContainer = Instance.new("Frame")
+    jumpContainer.Name = "JumpContainer"
+    jumpContainer.Size = UDim2.new(1, -8, 0, isMobile and 218 or 270)
+    jumpContainer.BackgroundColor3 = Colors.card
+    jumpContainer.BackgroundTransparency = 0.7
+    jumpContainer.BorderSizePixel = 0
+    jumpContainer.ZIndex = 202
+    jumpContainer.LayoutOrder = 4
+    jumpContainer.Parent = parent
+    Utils.corner(jumpContainer, 10)
+    
+    -- Jump Master Toggle
+    local jumpMasterCard, jumpMasterStroke = createCard(jumpContainer, "Enable Jump Sounds")
+    jumpMasterCard.Position = UDim2.new(0, 8, 0, 8)
+    jumpMasterCard.BackgroundTransparency = 0.5
+    
+    local jumpMasterKnob, jumpMasterToggleStroke, jumpMasterBtn
+    jumpMasterToggle, jumpMasterKnob, jumpMasterToggleStroke, jumpMasterBtn = createToggleButton(jumpMasterCard)
+    jumpMasterToggle.BackgroundColor3 = jumpEnabled and Colors.toggleOn or Colors.toggleOff
+    jumpMasterToggleStroke.Color = jumpEnabled and Colors.accent or Colors.divider
+    jumpMasterToggleStroke.Transparency = jumpEnabled and 0 or 0.7
+    jumpMasterKnob.Position = jumpEnabled and UDim2.new(1, isMobile and -14 or -18, 0.5, isMobile and -6 or -8) or UDim2.new(0, 2, 0.5, isMobile and -6 or -8)
+    
+    jumpMasterBtn.MouseButton1Click:Connect(function()
+        if not allSoundsEnabled then return end
+        
+        jumpEnabled = not jumpEnabled
+        
+        Utils.tween(jumpMasterToggle, TweenInfo.new(0.2), {
+            BackgroundColor3 = jumpEnabled and Colors.toggleOn or Colors.toggleOff
+        })
+        
+        Utils.tween(jumpMasterToggleStroke, TweenInfo.new(0.2), {
+            Color = jumpEnabled and Colors.accent or Colors.divider,
+            Transparency = jumpEnabled and 0 or 0.7
+        })
+        
+        Utils.tween(jumpMasterKnob, TweenInfo.new(0.2, Enum.EasingStyle.Quad), {
+            Position = jumpEnabled and UDim2.new(1, isMobile and -14 or -18, 0.5, isMobile and -6 or -8) or UDim2.new(0, 2, 0.5, isMobile and -6 or -8)
+        })
+    end)
+    
+    jumpMasterCard.MouseEnter:Connect(function()
+        Utils.tween(jumpMasterCard, TweenInfo.new(0.15), {BackgroundTransparency = 0.3})
+    end)
+    
+    jumpMasterCard.MouseLeave:Connect(function()
+        Utils.tween(jumpMasterCard, TweenInfo.new(0.15), {BackgroundTransparency = 0.5})
+    end)
+    
+    -- Jump Divider
+    local jumpDivLine = Instance.new("Frame")
+    jumpDivLine.Size = UDim2.new(1, -40, 0, 1)
+    jumpDivLine.Position = UDim2.new(0, 20, 0, isMobile and 54 or 66)
+    jumpDivLine.BackgroundColor3 = Colors.divider
+    jumpDivLine.BackgroundTransparency = 0.6
+    jumpDivLine.BorderSizePixel = 0
+    jumpDivLine.ZIndex = 202
+    jumpDivLine.Parent = jumpContainer
+    
+    -- Jump Type Label
+    local jumpTypeLabel = Instance.new("TextLabel")
+    jumpTypeLabel.Size = UDim2.new(1, -40, 0, isMobile and 20 or 25)
+    jumpTypeLabel.Position = UDim2.new(0, 20, 0, isMobile and 60 or 72)
+    jumpTypeLabel.BackgroundTransparency = 1
+    jumpTypeLabel.Text = "Select Jump Sound:"
+    jumpTypeLabel.TextColor3 = Colors.textGray
+    jumpTypeLabel.Font = Enum.Font.GothamBold
+    jumpTypeLabel.TextSize = isMobile and 10 or 12
+    jumpTypeLabel.TextXAlignment = Enum.TextXAlignment.Left
+    jumpTypeLabel.TextYAlignment = Enum.TextYAlignment.Center
+    jumpTypeLabel.ZIndex = 203
+    jumpTypeLabel.Parent = jumpContainer
+    
+    -- Jump Sound Toggles
+    local unyahCard, unyahToggle, unyahKnob, unyahStroke, unyahBtn = createSoundToggle(jumpContainer, "Unyah Jump", isMobile and 85 or 102)
+    local marioCard, marioToggle, marioKnob, marioStroke, marioBtn = createSoundToggle(jumpContainer, "Mario Jump", isMobile and 128 or 157)
+    local eightbitCard, eightbitToggle, eightbitKnob, eightbitStroke, eightbitBtn = createSoundToggle(jumpContainer, "8 Bit Jump", isMobile and 171 or 212)
+    
+    jumpToggleButtons = {
+        UNYAH = {toggle = unyahToggle, knob = unyahKnob, stroke = unyahStroke, btn = unyahBtn},
+        MARIO = {toggle = marioToggle, knob = marioKnob, stroke = marioStroke, btn = marioBtn},
+        EIGHTBIT = {toggle = eightbitToggle, knob = eightbitKnob, stroke = eightbitStroke, btn = eightbitBtn}
+    }
+    
+    -- Set initial states
+    for key, data in pairs(jumpToggleButtons) do
+        local isActive = (key == currentJumpSound)
+        data.toggle.BackgroundColor3 = isActive and Colors.toggleOn or Colors.toggleOff
+        data.stroke.Color = isActive and Colors.accent or Colors.divider
+        data.stroke.Transparency = isActive and 0 or 0.7
+        data.knob.Position = isActive and UDim2.new(1, isMobile and -14 or -18, 0.5, isMobile and -6 or -8) or UDim2.new(0, 2, 0.5, isMobile and -6 or -8)
+    end
+    
+    -- Jump switch function
+    local function switchJumpSound(soundType, soundId, btnKey)
+        if not allSoundsEnabled or not jumpEnabled then return end
+        
+        currentJumpSound = soundType
+        if jumpSound then jumpSound.SoundId = soundId end
+        
+        for key, data in pairs(jumpToggleButtons) do
+            local isActive = (key == btnKey)
+            Utils.tween(data.toggle, TweenInfo.new(0.2), {BackgroundColor3 = isActive and Colors.toggleOn or Colors.toggleOff})
+            Utils.tween(data.stroke, TweenInfo.new(0.2), {Color = isActive and Colors.accent or Colors.divider, Transparency = isActive and 0 or 0.7})
+            Utils.tween(data.knob, TweenInfo.new(0.2, Enum.EasingStyle.Quad), {Position = isActive and UDim2.new(1, isMobile and -14 or -18, 0.5, isMobile and -6 or -8) or UDim2.new(0, 2, 0.5, isMobile and -6 or -8)})
+        end
+    end
+    
+    unyahBtn.MouseButton1Click:Connect(function() switchJumpSound("UNYAH", UNYAH_JUMP_ID, "UNYAH") end)
+    marioBtn.MouseButton1Click:Connect(function() switchJumpSound("MARIO", MARIO_JUMP_ID, "MARIO") end)
+    eightbitBtn.MouseButton1Click:Connect(function() switchJumpSound("EIGHTBIT", EIGHTBIT_JUMP_ID, "EIGHTBIT") end)
+    
+    -- ═══════════════════════════════════════════════
+    -- WALK SOUNDS SECTION
+    -- ═══════════════════════════════════════════════
+    createSectionHeader("👣 WALK SOUNDS", 5)
+    
+    local walkContainer = Instance.new("Frame")
+    walkContainer.Name = "WalkContainer"
+    walkContainer.Size = UDim2.new(1, -8, 0, isMobile and 260 or 320)
+    walkContainer.BackgroundColor3 = Colors.card
+    walkContainer.BackgroundTransparency = 0.7
+    walkContainer.BorderSizePixel = 0
+    walkContainer.ZIndex = 202
+    walkContainer.LayoutOrder = 6
+    walkContainer.Parent = parent
+    Utils.corner(walkContainer, 10)
+    
+    -- Walk Master Toggle
+    local walkMasterCard, walkMasterStroke = createCard(walkContainer, "Enable Walk Sounds")
+    walkMasterCard.Position = UDim2.new(0, 8, 0, 8)
+    walkMasterCard.BackgroundTransparency = 0.5
+    
+    local walkMasterKnob, walkMasterToggleStroke, walkMasterBtn
+    walkMasterToggle, walkMasterKnob, walkMasterToggleStroke, walkMasterBtn = createToggleButton(walkMasterCard)
+    walkMasterToggle.BackgroundColor3 = walkEnabled and Colors.toggleOn or Colors.toggleOff
+    walkMasterToggleStroke.Color = walkEnabled and Colors.accent or Colors.divider
+    walkMasterToggleStroke.Transparency = walkEnabled and 0 or 0.7
+    walkMasterKnob.Position = walkEnabled and UDim2.new(1, isMobile and -14 or -18, 0.5, isMobile and -6 or -8) or UDim2.new(0, 2, 0.5, isMobile and -6 or -8)
+    
+    walkMasterBtn.MouseButton1Click:Connect(function()
+        if not allSoundsEnabled then return end
+        
+        walkEnabled = not walkEnabled
+        
+        Utils.tween(walkMasterToggle, TweenInfo.new(0.2), {BackgroundColor3 = walkEnabled and Colors.toggleOn or Colors.toggleOff})
+        Utils.tween(walkMasterToggleStroke, TweenInfo.new(0.2), {Color = walkEnabled and Colors.accent or Colors.divider, Transparency = walkEnabled and 0 or 0.7})
+        Utils.tween(walkMasterKnob, TweenInfo.new(0.2, Enum.EasingStyle.Quad), {Position = walkEnabled and UDim2.new(1, isMobile and -14 or -18, 0.5, isMobile and -6 or -8) or UDim2.new(0, 2, 0.5, isMobile and -6 or -8)})
+        
+        if not walkEnabled then
+            if walkSound and walkSound.IsPlaying then walkSound:Stop() end
+        else
+            if isWalking and walkSound then walkSound:Play() end
+        end
+    end)
+    
+    walkMasterCard.MouseEnter:Connect(function()
+        Utils.tween(walkMasterCard, TweenInfo.new(0.15), {BackgroundTransparency = 0.3})
+    end)
+    
+    walkMasterCard.MouseLeave:Connect(function()
+        Utils.tween(walkMasterCard, TweenInfo.new(0.15), {BackgroundTransparency = 0.5})
+    end)
+    
+    -- Walk Divider
+    local walkDivLine = Instance.new("Frame")
+    walkDivLine.Size = UDim2.new(1, -40, 0, 1)
+    walkDivLine.Position = UDim2.new(0, 20, 0, isMobile and 54 or 66)
+    walkDivLine.BackgroundColor3 = Colors.divider
+    walkDivLine.BackgroundTransparency = 0.6
+    walkDivLine.BorderSizePixel = 0
+    walkDivLine.ZIndex = 202
+    walkDivLine.Parent = walkContainer
+    
+    -- Walk Type Label
+    local walkTypeLabel = Instance.new("TextLabel")
+    walkTypeLabel.Size = UDim2.new(1, -40, 0, isMobile and 20 or 25)
+    walkTypeLabel.Position = UDim2.new(0, 20, 0, isMobile and 60 or 72)
+    walkTypeLabel.BackgroundTransparency = 1
+    walkTypeLabel.Text = "Select Walk Sound:"
+    walkTypeLabel.TextColor3 = Colors.textGray
+    walkTypeLabel.Font = Enum.Font.GothamBold
+    walkTypeLabel.TextSize = isMobile and 10 or 12
+    walkTypeLabel.TextXAlignment = Enum.TextXAlignment.Left
+    walkTypeLabel.TextYAlignment = Enum.TextYAlignment.Center
+    walkTypeLabel.ZIndex = 203
+    walkTypeLabel.Parent = walkContainer
+    
+    -- Walk Sound Toggles
+    local citcitCard, citcitToggle, citcitKnob, citcitStroke, citcitBtn = createSoundToggle(walkContainer, "Cit Cit Walk", isMobile and 85 or 102)
+    local squidCard, squidToggle, squidKnob, squidStroke, squidBtn = createSoundToggle(walkContainer, "Squidward Walk", isMobile and 128 or 157)
+    local spongeCard, spongeToggle, spongeKnob, spongeStroke, spongeBtn = createSoundToggle(walkContainer, "SpongeBob Walk", isMobile and 171 or 212)
+    local krabCard, krabToggle, krabKnob, krabStroke, krabBtn = createSoundToggle(walkContainer, "Mr. Krabs Walk", isMobile and 214 or 267)
+    
+    walkToggleButtons = {
+        CITCIT = {toggle = citcitToggle, knob = citcitKnob, stroke = citcitStroke, btn = citcitBtn},
+        SQUIDWARD = {toggle = squidToggle, knob = squidKnob, stroke = squidStroke, btn = squidBtn},
+        SPONGEBOB = {toggle = spongeToggle, knob = spongeKnob, stroke = spongeStroke, btn = spongeBtn},
+        MRKRAB = {toggle = krabToggle, knob = krabKnob, stroke = krabStroke, btn = krabBtn}
+    }
+    
+    -- Set initial states
+    for key, data in pairs(walkToggleButtons) do
+        local isActive = (key == currentWalkSound)
+        data.toggle.BackgroundColor3 = isActive and Colors.toggleOn or Colors.toggleOff
+        data.stroke.Color = isActive and Colors.accent or Colors.divider
+        data.stroke.Transparency = isActive and 0 or 0.7
+        data.knob.Position = isActive and UDim2.new(1, isMobile and -14 or -18, 0.5, isMobile and -6 or -8) or UDim2.new(0, 2, 0.5, isMobile and -6 or -8)
+    end
+    
+    -- Walk switch function
+    local function switchWalkSound(soundType, soundId, btnKey)
+        if not allSoundsEnabled or not walkEnabled then return end
+        
+        currentWalkSound = soundType
+        
+        if walkSound and walkSound.IsPlaying then walkSound:Stop() end
+        if walkSound then walkSound.SoundId = soundId end
+        if isWalking and walkSound then walkSound:Play() end
+        
+        for key, data in pairs(walkToggleButtons) do
+            local isActive = (key == btnKey)
+            Utils.tween(data.toggle, TweenInfo.new(0.2), {BackgroundColor3 = isActive and Colors.toggleOn or Colors.toggleOff})
+            Utils.tween(data.stroke, TweenInfo.new(0.2), {Color = isActive and Colors.accent or Colors.divider, Transparency = isActive and 0 or 0.7})
+            Utils.tween(data.knob, TweenInfo.new(0.2, Enum.EasingStyle.Quad), {Position = isActive and UDim2.new(1, isMobile and -14 or -18, 0.5, isMobile and -6 or -8) or UDim2.new(0, 2, 0.5, isMobile and -6 or -8)})
+        end
+    end
+    
+    citcitBtn.MouseButton1Click:Connect(function() switchWalkSound("CITCIT", CITCIT_WALK_ID, "CITCIT") end)
+    squidBtn.MouseButton1Click:Connect(function() switchWalkSound("SQUIDWARD", SQUIDWARD_WALK_ID, "SQUIDWARD") end)
+    spongeBtn.MouseButton1Click:Connect(function() switchWalkSound("SPONGEBOB", SPONGEBOB_WALK_ID, "SPONGEBOB") end)
+    krabBtn.MouseButton1Click:Connect(function() switchWalkSound("MRKRAB", MRKRAB_WALK_ID, "MRKRAB") end)
+    
+    -- Update CanvasSize untuk parent ScrollingFrame
+    task.wait(0.1)
+    if parent:IsA("ScrollingFrame") then
+        local contentHeight = 0
+        local visibleChildren = 0
+        
+        for _, child in ipairs(parent:GetChildren()) do
+            if child:IsA("GuiObject") and child.Visible and not child:IsA("UIListLayout") and not child:IsA("UIPadding") then
+                contentHeight = contentHeight + child.AbsoluteSize.Y
+                visibleChildren = visibleChildren + 1
+            end
+        end
+        
+        local listLayout = parent:FindFirstChildOfClass("UIListLayout")
+        local spacing = 0
+        if listLayout and listLayout.Padding then
+            spacing = listLayout.Padding.Offset * math.max(0, visibleChildren - 1)
+        end
+        
+        local totalPadding = (isMobile and 8 or 12) + (isMobile and 16 or 20)
+        local extraBuffer = isMobile and 30 or 40
+        
+        parent.CanvasSize = UDim2.new(0, 0, 0, contentHeight + spacing + totalPadding + extraBuffer)
+    end
+end
+
+-- ═══════════════════════════════════════════════
+-- SETUP & CLEANUP
+-- ═══════════════════════════════════════════════
+function SFXTab.setup()
+    hideDefaultSounds(character)
+    setupCustomSounds()
+    
+    jumpConnection = humanoid.Jumping:Connect(onJump)
+    runConnection = humanoid.Running:Connect(handleWalking)
+    stateConnection = humanoid.StateChanged:Connect(handleStateChanged)
+    heartbeatConnection = game:GetService("RunService").Heartbeat:Connect(ensureSoundPlaying)
+    
+    player.CharacterAdded:Connect(function(newChar)
+        character = newChar
+        humanoid = character:WaitForChild("Humanoid")
+        rootPart = character:WaitForChild("HumanoidRootPart")
+        
+        hideDefaultSounds(character)
+        setupCustomSounds()
+        
+        lastJumpTime = 0
+        isWalking = false
+        isJumping = false
+        
+        if jumpConnection then jumpConnection:Disconnect() end
+        if runConnection then runConnection:Disconnect() end
+        if stateConnection then stateConnection:Disconnect() end
+        if heartbeatConnection then heartbeatConnection:Disconnect() end
+        
+        jumpConnection = humanoid.Jumping:Connect(onJump)
+        runConnection = humanoid.Running:Connect(handleWalking)
+        stateConnection = humanoid.StateChanged:Connect(handleStateChanged)
+        heartbeatConnection = game:GetService("RunService").Heartbeat:Connect(ensureSoundPlaying)
+    end)
+    
+    print("✅ SFX Tab: Setup complete")
+end
+
+function SFXTab.cleanup()
+    if jumpConnection then jumpConnection:Disconnect() end
+    if runConnection then runConnection:Disconnect() end
+    if stateConnection then stateConnection:Disconnect() end
+    if heartbeatConnection then heartbeatConnection:Disconnect() end
+    if jumpSound then jumpSound:Destroy() end
+    if walkSound then walkSound:Destroy() end
+    
+    print("🔇 SFX Tab cleaned up")
+end
+
+return SFXTab
