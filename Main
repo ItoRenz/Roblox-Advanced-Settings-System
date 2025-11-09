@@ -1,0 +1,556 @@
+--[[
+    ═══════════════════════════════════════════════
+    ADVANCED SETTINGS - MAIN CORE
+    ═══════════════════════════════════════════════
+    Author: ItoRenz00
+    Description: Core framework
+    Place in: StarterPlayer > StarterPlayerScripts > AdvancedSettings > Main
+    ═══════════════════════════════════════════════
+]]
+
+local Players = game:GetService("Players")
+local UIS = game:GetService("UserInputService")
+local TweenService = game:GetService("TweenService")
+local RunService = game:GetService("RunService")
+
+local LocalPlayer = Players.LocalPlayer
+local PlayerGui = LocalPlayer:WaitForChild("PlayerGui")
+local isMobile = UIS.TouchEnabled and not UIS.KeyboardEnabled
+
+-- ═══════════════════════════════════════════════
+-- COLOR PALETTE
+-- ═══════════════════════════════════════════════
+local Colors = {
+    bg = Color3.fromRGB(44,47,51),
+    panel = Color3.fromRGB(52,56,61),
+    card = Color3.fromRGB(58,62,68),
+    accent = Color3.fromRGB(255,204,92),
+    text = Color3.fromRGB(255,255,255),
+    textGray = Color3.fromRGB(180,185,195),
+    textDark = Color3.fromRGB(140,145,155),
+    divider = Color3.fromRGB(80,85,92),
+    toggleOn = Color3.fromRGB(255,204,92),
+    toggleOff = Color3.fromRGB(70,75,82),
+    good = Color3.fromRGB(120,220,120),
+    med = Color3.fromRGB(255,204,92),
+    bad = Color3.fromRGB(255,100,100)
+}
+
+-- ═══════════════════════════════════════════════
+-- UTILITY FUNCTIONS
+-- ═══════════════════════════════════════════════
+local Utils = {}
+
+function Utils.corner(parent, radius)
+    local c = Instance.new("UICorner")
+    c.CornerRadius = UDim.new(0, radius)
+    c.Parent = parent
+    return c
+end
+
+function Utils.tween(object, tweenInfo, properties)
+    TweenService:Create(object, tweenInfo, properties):Play()
+end
+
+-- ═══════════════════════════════════════════════
+-- GLOBAL REGISTRY
+-- ═══════════════════════════════════════════════
+_G.AdvancedSettings = {
+    -- Core references
+    gui = nil,
+    contentScroll = nil,
+    activeTab = "GAMEPLAY",
+    menuOpen = false,
+    
+    -- Registered tabs
+    tabs = {},
+    tabButtons = {},
+    
+    -- Utilities
+    colors = Colors,
+    utils = Utils,
+    isMobile = isMobile,
+    
+    -- API
+    registerTab = nil,
+    updateContent = nil,
+    toggleMenu = nil
+}
+
+-- ═══════════════════════════════════════════════
+-- GUI CREATION
+-- ═══════════════════════════════════════════════
+local screenGui = Instance.new("ScreenGui")
+screenGui.Name = "AdvancedSettingsGui"
+screenGui.ResetOnSpawn = false
+screenGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+screenGui.DisplayOrder = 999999
+screenGui.IgnoreGuiInset = true
+screenGui.Parent = PlayerGui
+
+_G.AdvancedSettings.gui = screenGui
+
+task.wait(0.1)
+
+-- Settings Button
+local btn = Instance.new("TextButton")
+btn.Size = isMobile and UDim2.new(0,30,0,30) or UDim2.new(0,32,0,32)
+btn.Position = isMobile and UDim2.new(1,-38,0,8) or UDim2.new(1,-42,0,10)
+btn.BackgroundColor3 = Color3.fromRGB(58,62,68)
+btn.BackgroundTransparency = 0.15
+btn.BorderSizePixel = 0
+btn.Text = ""
+btn.ZIndex = 1000
+btn.Parent = screenGui
+Utils.corner(btn, 6)
+
+local btnStroke = Instance.new("UIStroke")
+btnStroke.Color = Colors.accent
+btnStroke.Thickness = 1.2
+btnStroke.Transparency = 0.4
+btnStroke.Parent = btn
+
+local icon = Instance.new("TextLabel")
+icon.Size = UDim2.new(1,0,1,0)
+icon.BackgroundTransparency = 1
+icon.Text = "⚙"
+icon.TextColor3 = Colors.accent
+icon.Font = Enum.Font.GothamBold
+icon.TextSize = isMobile and 16 or 16
+icon.ZIndex = 1001
+icon.Parent = btn
+
+-- Backdrop
+local backdrop = Instance.new("Frame")
+backdrop.Size = UDim2.new(1,0,1,0)
+backdrop.BackgroundColor3 = Color3.new(0,0,0)
+backdrop.BackgroundTransparency = 1
+backdrop.BorderSizePixel = 0
+backdrop.Visible = false
+backdrop.ZIndex = 100
+backdrop.Parent = screenGui
+
+-- Main Panel - PERFECTLY CENTERED WITH ANCHORPOINT
+local panel = Instance.new("Frame")
+panel.Name = "MainPanel"
+panel.AnchorPoint = Vector2.new(0.5, 0.5) -- CRITICAL: Center anchor point
+panel.Position = UDim2.new(0.5, 0, 0.5, 0) -- CRITICAL: Center position
+if isMobile then
+    panel.Size = UDim2.new(0.85, 0, 0.7, 0)
+else
+    panel.Size = UDim2.new(0, 900, 0, 600)
+end
+panel.BackgroundColor3 = Colors.bg
+panel.BackgroundTransparency = 0.6
+panel.BorderSizePixel = 0
+panel.Visible = false
+panel.ZIndex = 200
+panel.ClipsDescendants = true
+panel.Parent = screenGui
+Utils.corner(panel, 16)
+
+local panelStroke = Instance.new("UIStroke")
+panelStroke.Color = Colors.accent
+panelStroke.Thickness = 1.5
+panelStroke.Transparency = 0.3
+panelStroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
+panelStroke.Parent = panel
+
+-- Header
+local header = Instance.new("Frame")
+header.Size = UDim2.new(1,0,0,isMobile and 50 or 70)
+header.BackgroundColor3 = Colors.panel
+header.BackgroundTransparency = 0.7
+header.BorderSizePixel = 0
+header.ZIndex = 201
+header.Parent = panel
+
+local titleLabel = Instance.new("TextLabel")
+titleLabel.Size = UDim2.new(0,300,1,0)
+titleLabel.Position = UDim2.new(0,isMobile and 12 or 25,0,0)
+titleLabel.BackgroundTransparency = 1
+titleLabel.Text = "SETTINGS"
+titleLabel.TextColor3 = Colors.accent
+titleLabel.Font = Enum.Font.GothamBold
+titleLabel.TextSize = isMobile and 16 or 24
+titleLabel.TextXAlignment = Enum.TextXAlignment.Left
+titleLabel.ZIndex = 202
+titleLabel.Parent = header
+
+local closeBtn = Instance.new("TextButton")
+closeBtn.Size = UDim2.new(0,isMobile and 30 or 40,0,isMobile and 30 or 40)
+closeBtn.Position = UDim2.new(1,isMobile and -38 or -55,0.5,isMobile and -15 or -20)
+closeBtn.BackgroundColor3 = Colors.card
+closeBtn.BackgroundTransparency = 0.5
+closeBtn.BorderSizePixel = 0
+closeBtn.Text = ""
+closeBtn.ZIndex = 202
+closeBtn.Parent = header
+Utils.corner(closeBtn, 8)
+
+local closeIcon = Instance.new("TextLabel")
+closeIcon.Size = UDim2.new(1,0,1,0)
+closeIcon.BackgroundTransparency = 1
+closeIcon.Text = "×"
+closeIcon.TextColor3 = Colors.text
+closeIcon.Font = Enum.Font.GothamBold
+closeIcon.TextSize = isMobile and 24 or 32
+closeIcon.ZIndex = 203
+closeIcon.Parent = closeBtn
+
+-- Tab Section
+local headerHeight = isMobile and 50 or 70
+local tabSection = Instance.new("Frame")
+tabSection.Size = UDim2.new(0,isMobile and 110 or 200,1,-headerHeight)
+tabSection.Position = UDim2.new(0,0,0,headerHeight)
+tabSection.BackgroundColor3 = Colors.panel
+tabSection.BackgroundTransparency = 0.7
+tabSection.BorderSizePixel = 0
+tabSection.ZIndex = 201
+tabSection.Parent = panel
+
+local tabContainer = Instance.new("ScrollingFrame")
+tabContainer.Size = UDim2.new(1,-8,1,-16)
+tabContainer.Position = UDim2.new(0,4,0,8)
+tabContainer.BackgroundTransparency = 1
+tabContainer.BorderSizePixel = 0
+tabContainer.ScrollBarThickness = 3
+tabContainer.ScrollBarImageColor3 = Colors.accent
+tabContainer.ScrollBarImageTransparency = 0.5
+tabContainer.ScrollingDirection = Enum.ScrollingDirection.Y -- ONLY VERTICAL
+tabContainer.CanvasSize = UDim2.new(0,0,0,0)
+tabContainer.ElasticBehavior = Enum.ElasticBehavior.Never
+tabContainer.ZIndex = 201
+tabContainer.Parent = tabSection
+
+-- ═══════════════════════════════════════════════
+-- ANTI HORIZONTAL & VERTICAL OVER-SCROLL FOR TABS
+-- ═══════════════════════════════════════════════
+tabContainer:GetPropertyChangedSignal("CanvasPosition"):Connect(function()
+    -- BLOCK HORIZONTAL SCROLL
+    if tabContainer.CanvasPosition.X ~= 0 then
+        tabContainer.CanvasPosition = Vector2.new(0, tabContainer.CanvasPosition.Y)
+    end
+    
+    -- BLOCK VERTICAL OVER-SCROLL
+    local maxScroll = tabContainer.CanvasSize.Y.Offset - tabContainer.AbsoluteSize.Y
+    
+    if maxScroll <= 0 then
+        tabContainer.CanvasPosition = Vector2.new(0, 0)
+        return
+    end
+    
+    if tabContainer.CanvasPosition.Y < 0 then
+        tabContainer.CanvasPosition = Vector2.new(0, 0)
+    elseif tabContainer.CanvasPosition.Y > maxScroll then
+        tabContainer.CanvasPosition = Vector2.new(0, maxScroll)
+    end
+end)
+
+local tabLayout = Instance.new("UIListLayout")
+tabLayout.Padding = UDim.new(0,isMobile and 6 or 8)
+tabLayout.SortOrder = Enum.SortOrder.LayoutOrder
+tabLayout.Parent = tabContainer
+tabLayout:GetPropertyChangedSignal("AbsoluteContentSize"):Connect(function()
+    tabContainer.CanvasSize = UDim2.new(0,0,0,tabLayout.AbsoluteContentSize.Y+20)
+end)
+
+-- Content Section
+local tabWidth = isMobile and 110 or 200
+local contentSection = Instance.new("Frame")
+contentSection.Size = UDim2.new(1,-(tabWidth+8),1,-(headerHeight+8))
+contentSection.Position = UDim2.new(0,tabWidth+4,0,headerHeight+4)
+contentSection.BackgroundTransparency = 1
+contentSection.BorderSizePixel = 0
+contentSection.ZIndex = 201
+contentSection.ClipsDescendants = true
+contentSection.Parent = panel
+
+local contentScroll = Instance.new("ScrollingFrame")
+contentScroll.Name = "ContentScroll"
+contentScroll.Size = UDim2.new(1,-8,1,-8)
+contentScroll.Position = UDim2.new(0,4,0,4)
+contentScroll.BackgroundTransparency = 1
+contentScroll.BorderSizePixel = 0
+contentScroll.ScrollBarThickness = isMobile and 4 or 6
+contentScroll.ScrollBarImageColor3 = Colors.accent
+contentScroll.ScrollBarImageTransparency = 0.5
+contentScroll.ScrollingDirection = Enum.ScrollingDirection.Y -- ONLY VERTICAL
+contentScroll.CanvasSize = UDim2.new(0,0,0,0)
+contentScroll.ClipsDescendants = true
+contentScroll.AutomaticCanvasSize = Enum.AutomaticSize.Y
+contentScroll.ElasticBehavior = Enum.ElasticBehavior.Never
+contentScroll.ZIndex = 201
+contentScroll.Parent = contentSection
+
+-- ═══════════════════════════════════════════════
+-- ANTI HORIZONTAL & VERTICAL OVER-SCROLL FOR CONTENT
+-- ═══════════════════════════════════════════════
+contentScroll:GetPropertyChangedSignal("CanvasPosition"):Connect(function()
+    -- BLOCK HORIZONTAL SCROLL
+    if contentScroll.CanvasPosition.X ~= 0 then
+        contentScroll.CanvasPosition = Vector2.new(0, contentScroll.CanvasPosition.Y)
+    end
+    
+    -- BLOCK VERTICAL OVER-SCROLL
+    local maxScroll = contentScroll.CanvasSize.Y.Offset - contentScroll.AbsoluteSize.Y
+    
+    if maxScroll <= 0 then
+        contentScroll.CanvasPosition = Vector2.new(0, 0)
+        return
+    end
+    
+    if contentScroll.CanvasPosition.Y < 0 then
+        contentScroll.CanvasPosition = Vector2.new(0, 0)
+    elseif contentScroll.CanvasPosition.Y > maxScroll then
+        contentScroll.CanvasPosition = Vector2.new(0, maxScroll)
+    end
+end)
+
+_G.AdvancedSettings.contentScroll = contentScroll
+
+local contentPadding = Instance.new("UIPadding")
+contentPadding.PaddingLeft = UDim.new(0,4)
+contentPadding.PaddingRight = UDim.new(0,4)
+contentPadding.PaddingTop = UDim.new(0,4)
+contentPadding.PaddingBottom = UDim.new(0,4)
+contentPadding.Parent = contentScroll
+
+local contentLayout = Instance.new("UIListLayout")
+contentLayout.Padding = UDim.new(0,isMobile and 8 or 12)
+contentLayout.SortOrder = Enum.SortOrder.LayoutOrder
+contentLayout.Parent = contentScroll
+contentLayout:GetPropertyChangedSignal("AbsoluteContentSize"):Connect(function()
+    contentScroll.CanvasSize = UDim2.new(0,0,0,contentLayout.AbsoluteContentSize.Y+20)
+end)
+
+-- ═══════════════════════════════════════════════
+-- TAB SYSTEM
+-- ═══════════════════════════════════════════════
+
+function _G.AdvancedSettings.registerTab(id, name, order, createContentFunc, setupFunc, cleanupFunc)
+    table.insert(_G.AdvancedSettings.tabs, {
+        id = id,
+        name = name,
+        order = order,
+        createContent = createContentFunc,
+        setup = setupFunc,
+        cleanup = cleanupFunc
+    })
+    
+    -- Sort by order
+    table.sort(_G.AdvancedSettings.tabs, function(a, b)
+        return a.order < b.order
+    end)
+    
+    print("✅ Tab registered: " .. name)
+end
+
+local function createTabButton(data)
+    local tabBtn = Instance.new("TextButton")
+    tabBtn.Name = data.id
+    tabBtn.Size = UDim2.new(1,-10,0,isMobile and 35 or 45)
+    tabBtn.BackgroundColor3 = Colors.card
+    tabBtn.BackgroundTransparency = 1
+    tabBtn.BorderSizePixel = 0
+    tabBtn.Text = ""
+    tabBtn.AutoButtonColor = false
+    tabBtn.ZIndex = 202
+    tabBtn.LayoutOrder = data.order
+    tabBtn.Parent = tabContainer
+    Utils.corner(tabBtn, 8)
+    
+    local indicator = Instance.new("Frame")
+    indicator.Size = UDim2.new(0,3,1,-10)
+    indicator.Position = UDim2.new(0,0,0,5)
+    indicator.BackgroundColor3 = Colors.accent
+    indicator.BorderSizePixel = 0
+    indicator.BackgroundTransparency = 1
+    indicator.ZIndex = 203
+    indicator.Parent = tabBtn
+    Utils.corner(indicator, 2)
+    
+    local label = Instance.new("TextLabel")
+    label.Size = UDim2.new(1,-15,1,0)
+    label.Position = UDim2.new(0,isMobile and 8 or 15,0,0)
+    label.BackgroundTransparency = 1
+    label.Text = data.name
+    label.TextColor3 = Colors.textGray
+    label.Font = Enum.Font.GothamBold
+    label.TextSize = isMobile and 10 or 14
+    label.TextXAlignment = Enum.TextXAlignment.Left
+    label.ZIndex = 204
+    label.Parent = tabBtn
+    
+    _G.AdvancedSettings.tabButtons[data.id] = {
+        btn = tabBtn,
+        indicator = indicator,
+        label = label
+    }
+    
+    tabBtn.MouseButton1Click:Connect(function()
+        _G.AdvancedSettings.activeTab = data.id
+        updateTabUI()
+        _G.AdvancedSettings.updateContent()
+    end)
+    
+    tabBtn.MouseEnter:Connect(function()
+        if _G.AdvancedSettings.activeTab ~= data.id then
+            Utils.tween(tabBtn, TweenInfo.new(0.15), {BackgroundTransparency = 0.7})
+        end
+    end)
+    
+    tabBtn.MouseLeave:Connect(function()
+        if _G.AdvancedSettings.activeTab ~= data.id then
+            Utils.tween(tabBtn, TweenInfo.new(0.15), {BackgroundTransparency = 1})
+        end
+    end)
+    
+    return tabBtn
+end
+
+function updateTabUI()
+    for id, components in pairs(_G.AdvancedSettings.tabButtons) do
+        local isActive = (id == _G.AdvancedSettings.activeTab)
+        Utils.tween(components.btn, TweenInfo.new(0.25), {BackgroundTransparency = isActive and 0.6 or 1})
+        Utils.tween(components.indicator, TweenInfo.new(0.25), {BackgroundTransparency = isActive and 0 or 1})
+        Utils.tween(components.label, TweenInfo.new(0.25), {TextColor3 = isActive and Colors.text or Colors.textGray})
+    end
+end
+
+function _G.AdvancedSettings.updateContent()
+    -- Clear content
+    for _, child in ipairs(contentScroll:GetChildren()) do
+        if child:IsA("Frame") then
+            child:Destroy()
+        end
+    end
+    
+    -- Find active tab
+    local activeTabData = nil
+    for _, tab in ipairs(_G.AdvancedSettings.tabs) do
+        if tab.id == _G.AdvancedSettings.activeTab then
+            activeTabData = tab
+            break
+        end
+    end
+    
+    -- Create content
+    if activeTabData and activeTabData.createContent then
+        activeTabData.createContent(contentScroll, Colors, isMobile, Utils)
+    end
+end
+
+-- ═══════════════════════════════════════════════
+-- MENU TOGGLE
+-- ═══════════════════════════════════════════════
+
+function _G.AdvancedSettings.toggleMenu()
+    _G.AdvancedSettings.menuOpen = not _G.AdvancedSettings.menuOpen
+    
+    if _G.AdvancedSettings.menuOpen then
+        Utils.tween(btn, TweenInfo.new(0.2), {BackgroundTransparency = 1})
+        Utils.tween(btnStroke, TweenInfo.new(0.2), {Transparency = 1})
+        Utils.tween(icon, TweenInfo.new(0.2), {TextTransparency = 1})
+        task.delay(0.2, function() btn.Visible = false end)
+        
+        backdrop.Visible = true
+        panel.Visible = true
+        Utils.tween(backdrop, TweenInfo.new(0.35), {BackgroundTransparency = 0.25})
+        
+        -- Start from center with size 0
+        panel.Size = UDim2.new(0,0,0,0)
+        panel.Position = UDim2.new(0.5,0,0.5,0)
+        
+        -- Target size based on device
+        local targetSize = isMobile and UDim2.new(0.85,0,0.7,0) or UDim2.new(0,900,0,600)
+        
+        -- Animate to target size (position stays centered due to AnchorPoint)
+        Utils.tween(panel, TweenInfo.new(0.35, Enum.EasingStyle.Quart, Enum.EasingDirection.Out), {
+            Size = targetSize
+        })
+        
+        updateTabUI()
+        _G.AdvancedSettings.updateContent()
+    else
+        Utils.tween(backdrop, TweenInfo.new(0.25), {BackgroundTransparency = 1})
+        
+        -- Animate to size 0 (position stays centered)
+        Utils.tween(panel, TweenInfo.new(0.25, Enum.EasingStyle.Quart, Enum.EasingDirection.In), {
+            Size = UDim2.new(0,0,0,0)
+        })
+        
+        task.delay(0.25, function()
+            backdrop.Visible = false
+            panel.Visible = false
+            btn.Visible = true
+            btn.BackgroundTransparency = 1
+            btnStroke.Transparency = 1
+            icon.TextTransparency = 1
+            Utils.tween(btn, TweenInfo.new(0.2), {BackgroundTransparency = 0.15})
+            Utils.tween(btnStroke, TweenInfo.new(0.2), {Transparency = 0.4})
+            Utils.tween(icon, TweenInfo.new(0.2), {TextTransparency = 0})
+        end)
+    end
+end
+
+-- ═══════════════════════════════════════════════
+-- EVENT CONNECTIONS
+-- ═══════════════════════════════════════════════
+
+task.wait(0.2)
+
+pcall(function()
+    btn.MouseButton1Click:Connect(_G.AdvancedSettings.toggleMenu)
+end)
+
+pcall(function()
+    closeBtn.MouseButton1Click:Connect(_G.AdvancedSettings.toggleMenu)
+end)
+
+pcall(function()
+    backdrop.MouseButton1Click:Connect(_G.AdvancedSettings.toggleMenu)
+end)
+
+closeBtn.MouseEnter:Connect(function()
+    if closeBtn.Parent then
+        Utils.tween(closeBtn, TweenInfo.new(0.15), {BackgroundTransparency = 0.3})
+    end
+end)
+
+closeBtn.MouseLeave:Connect(function()
+    if closeBtn.Parent then
+        Utils.tween(closeBtn, TweenInfo.new(0.15), {BackgroundTransparency = 0.5})
+    end
+end)
+
+-- ═══════════════════════════════════════════════
+-- LOAD TABS
+-- ═══════════════════════════════════════════════
+
+-- Wait for tab modules to load
+task.wait(0.5)
+
+-- Create tab buttons after all tabs registered
+for _, tab in ipairs(_G.AdvancedSettings.tabs) do
+    createTabButton(tab)
+    
+    -- Run setup if provided
+    if tab.setup then
+        task.spawn(tab.setup)
+    end
+end
+
+-- Initial UI update
+updateTabUI()
+_G.AdvancedSettings.updateContent()
+
+print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+print("  ✨ ADVANCED SETTINGS ✨")
+print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+print("👤 Author: ItoRenz00")
+print("🔧 Modular System: ACTIVE")
+print("📱 Device: " .. (isMobile and "Mobile" or "PC"))
+print("🔌 Plugin System: ACTIVE")
+print("📦 Registered Tabs: " .. #_G.AdvancedSettings.tabs)
+print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
