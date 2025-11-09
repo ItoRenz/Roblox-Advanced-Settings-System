@@ -1,0 +1,585 @@
+--[[
+    ═══════════════════════════════════════════════════════════════
+    MUSIC PLAYER SERVER
+    ═══════════════════════════════════════════════════════════════
+    Author: ItoRenz00
+    Place in: ServerScriptService
+    ═══════════════════════════════════════════════════════════════
+]]
+
+local DataStoreService = game:GetService("DataStoreService")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local Players = game:GetService("Players")
+
+-- ═══════════════════════════════════════════════
+-- CONFIGURATION
+-- ═══════════════════════════════════════════════
+
+local CONFIG = {
+    DATASTORE_NAME = "MusicPlayerData_v2",
+    AUTOSAVE_INTERVAL = 180,
+    MAX_CUSTOM_SONGS = 100,
+    MAX_PLAYLISTS = 100,
+    DEBUG_MODE = false  -- Set false untuk production
+}
+
+local MusicDataStore = DataStoreService:GetDataStore(CONFIG.DATASTORE_NAME)
+local playerDataCache = {}
+
+local remoteEvent = ReplicatedStorage:FindFirstChild("MusicPlayerRemote")
+if not remoteEvent then
+    remoteEvent = Instance.new("RemoteEvent")
+    remoteEvent.Name = "MusicPlayerRemote"
+    remoteEvent.Parent = ReplicatedStorage
+end
+
+local remoteFunction = ReplicatedStorage:FindFirstChild("MusicPlayerFunction")
+if not remoteFunction then
+    remoteFunction = Instance.new("RemoteFunction")
+    remoteFunction.Name = "MusicPlayerFunction"
+    remoteFunction.Parent = ReplicatedStorage
+end
+
+-- ═══════════════════════════════════════════════
+-- UTILITY FUNCTIONS
+-- ═══════════════════════════════════════════════
+
+local function debug_log(prefix, message)
+    if CONFIG.DEBUG_MODE then
+        print("[" .. prefix .. "] " .. message)
+    end
+end
+
+local function getDataKey(userId)
+    return "Player_" .. tostring(userId)
+end
+
+local function validateSoundId(soundId)
+    if not soundId or soundId == "" then
+        return false, "Sound ID cannot be empty"
+    end
+    
+    if not string.find(soundId, "rbxassetid://") then
+        soundId = "rbxassetid://" .. soundId
+    end
+    
+    local numStr = string.match(soundId, "rbxassetid://(%d+)")
+    if not numStr or tonumber(numStr) == nil then
+        return false, "Invalid Sound ID format"
+    end
+    
+    return true, soundId
+end
+
+-- ═══════════════════════════════════════════════
+-- DEFAULT DATA STRUCTURE
+-- ═══════════════════════════════════════════════
+
+local function getDefaultData()
+    return {
+        customSongs = {},
+        playlists = {},
+        favorites = {},
+        settings = {
+            volume = 5,
+            -- Loop mode dan shuffle TIDAK ada di default, client yang atur
+            autoPlayOnJoin = true,
+            lastPlayedIndex = 1
+        },
+        stats = {
+            totalSongsPlayed = 0,
+            totalPlayTime = 0,
+            lastModified = os.time(),
+            createdAt = os.time()
+        }
+    }
+end
+
+-- ═══════════════════════════════════════════════
+-- DATA VALIDATION & SANITIZATION
+-- ═══════════════════════════════════════════════
+
+local function sanitizeSettings(settings)
+    -- Pastikan settings selalu valid
+    if not settings or type(settings) ~= "table" then
+        debug_log("SANITIZE", "Settings not table, using defaults")
+        return {
+            volume = 5,
+            -- Loop mode dan shuffle TIDAK disimpan, client gunakan default
+            autoPlayOnJoin = true,
+            lastPlayedIndex = 1
+        }
+    end
+    
+    local sanitized = {}
+    
+    -- Volume: 0-10, default 5 (DISIMPAN)
+    sanitized.volume = settings.volume or 5
+    if type(sanitized.volume) ~= "number" or sanitized.volume < 0 or sanitized.volume > 10 then
+        sanitized.volume = 5
+    end
+    
+    -- Loop Mode: TIDAK DISIMPAN - client gunakan default "all"
+    -- Shuffle: TIDAK DISIMPAN - client gunakan default false
+    
+    -- Auto play (DISIMPAN)
+    sanitized.autoPlayOnJoin = settings.autoPlayOnJoin
+    if type(sanitized.autoPlayOnJoin) ~= "boolean" then
+        sanitized.autoPlayOnJoin = true
+    end
+    
+    -- Last played index (DISIMPAN)
+    sanitized.lastPlayedIndex = settings.lastPlayedIndex or 1
+    if type(sanitized.lastPlayedIndex) ~= "number" or sanitized.lastPlayedIndex < 1 then
+        sanitized.lastPlayedIndex = 1
+    end
+    
+    debug_log("SANITIZE", "Settings sanitized - Volume: " .. sanitized.volume)
+    
+    return sanitized
+end
+
+local function validateSong(song)
+    if type(song) ~= "table" then
+        return false, "Song must be a table"
+    end
+    
+    if not song.id or type(song.id) ~= "string" then
+        return false, "Invalid song ID"
+    end
+    
+    if not song.title or type(song.title) ~= "string" then
+        return false, "Invalid song title"
+    end
+    
+    if song.title:len() > 100 then
+        return false, "Song title too long (max 100 chars)"
+    end
+    
+    return true, "Valid"
+end
+
+local function validatePlaylist(playlist)
+    if type(playlist) ~= "table" then
+        return false, "Playlist must be a table"
+    end
+    
+    if not playlist.name or type(playlist.name) ~= "string" then
+        return false, "Invalid playlist name"
+    end
+    
+    if playlist.name:len() > 50 then
+        return false, "Playlist name too long (max 50 chars)"
+    end
+    
+    if not playlist.songs or type(playlist.songs) ~= "table" then
+        return false, "Invalid playlist songs"
+    end
+    
+    for i, songId in ipairs(playlist.songs) do
+        if type(songId) ~= "string" then
+            return false, "Invalid song ID in playlist at index " .. i
+        end
+    end
+    
+    return true, "Valid"
+end
+
+local function validateData(data)
+    if type(data) ~= "table" then
+        return false, "Invalid data format"
+    end
+    
+    if data.customSongs then
+        if type(data.customSongs) ~= "table" then
+            return false, "Invalid customSongs format"
+        end
+        
+        if #data.customSongs > CONFIG.MAX_CUSTOM_SONGS then
+            return false, "Too many custom songs (max: " .. CONFIG.MAX_CUSTOM_SONGS .. ")"
+        end
+        
+        for i, song in ipairs(data.customSongs) do
+            local valid, msg = validateSong(song)
+            if not valid then
+                return false, "Invalid song at index " .. i .. ": " .. msg
+            end
+        end
+    end
+    
+    if data.playlists then
+        if type(data.playlists) ~= "table" then
+            return false, "Invalid playlists format"
+        end
+        
+        if #data.playlists > CONFIG.MAX_PLAYLISTS then
+            return false, "Too many playlists (max: " .. CONFIG.MAX_PLAYLISTS .. ")"
+        end
+        
+        for i, playlist in ipairs(data.playlists) do
+            local valid, msg = validatePlaylist(playlist)
+            if not valid then
+                return false, "Invalid playlist at index " .. i .. ": " .. msg
+            end
+        end
+    end
+    
+    if data.favorites then
+        if type(data.favorites) ~= "table" then
+            return false, "Invalid favorites format"
+        end
+    end
+    
+    -- Settings akan di-sanitize, tidak perlu strict validation
+    
+    return true, "Data valid"
+end
+
+-- ═══════════════════════════════════════════════
+-- LOAD & SAVE FUNCTIONS
+-- ═══════════════════════════════════════════════
+
+local function loadPlayerData(player)
+    local userId = player.UserId
+    local dataKey = getDataKey(userId)
+    
+    debug_log("LOAD", "Loading data for " .. player.Name .. " (ID: " .. userId .. ")")
+    
+    local success, result = pcall(function()
+        return MusicDataStore:GetAsync(dataKey)
+    end)
+    
+    if success and result then
+        debug_log("LOAD", "Data found for " .. player.Name)
+        
+        local isValid, message = validateData(result)
+        if isValid then
+            -- Sanitize settings untuk memastikan nilai valid
+            result.settings = sanitizeSettings(result.settings)
+            
+            playerDataCache[userId] = result
+            print("✅ [LOAD] Loaded music data for " .. player.Name)
+            return result
+        else
+            print("⚠️ [LOAD] Invalid data for " .. player.Name .. ": " .. message)
+            playerDataCache[userId] = getDefaultData()
+            return playerDataCache[userId]
+        end
+    elseif not success then
+        print("❌ [LOAD] Failed to load data for " .. player.Name .. ": " .. tostring(result))
+    else
+        debug_log("LOAD", "No existing data for " .. player.Name .. ", creating new")
+    end
+    
+    -- Return default data
+    local defaultData = getDefaultData()
+    playerDataCache[userId] = defaultData
+    print("📝 [LOAD] New player data created for " .. player.Name)
+    return defaultData
+end
+
+local function savePlayerData(player, data)
+    local userId = player.UserId
+    local dataKey = getDataKey(userId)
+    
+    -- Sanitize settings sebelum save
+    data.settings = sanitizeSettings(data.settings)
+    
+    local isValid, message = validateData(data)
+    if not isValid then
+        print("❌ [SAVE] Cannot save invalid data for " .. player.Name .. ": " .. message)
+        pcall(function()
+            remoteEvent:FireClient(player, "Error", "Invalid data: " .. message)
+        end)
+        return false
+    end
+    
+    data.stats = data.stats or {}
+    data.stats.lastModified = os.time()
+    
+    playerDataCache[userId] = data
+    
+    debug_log("SAVE", "Saving data for " .. player.Name)
+    
+    local maxRetries = 3
+    for attempt = 1, maxRetries do
+        local success, errorMsg = pcall(function()
+            MusicDataStore:SetAsync(dataKey, data)
+        end)
+        
+        if success then
+            debug_log("SAVE", "Successfully saved for " .. player.Name)
+            pcall(function()
+                remoteEvent:FireClient(player, "SaveSuccess")
+            end)
+            return true
+        elseif attempt < maxRetries then
+            debug_log("SAVE", "Retry " .. attempt .. " for " .. player.Name)
+            task.wait(1)
+        end
+    end
+    
+    print("❌ [SAVE] Failed to save data for " .. player.Name)
+    pcall(function()
+        remoteEvent:FireClient(player, "Error", "Failed to save data after retries")
+    end)
+    return false
+end
+
+-- ═══════════════════════════════════════════════
+-- PLAYER EVENT HANDLERS
+-- ═══════════════════════════════════════════════
+
+Players.PlayerAdded:Connect(function(player)
+    print("🎵 [PLAYER] " .. player.Name .. " joined")
+    
+    task.spawn(function()
+        task.wait(1)
+        local data = loadPlayerData(player)
+        
+        -- Log data yang dikirim ke client
+        debug_log("SEND", "Sending data to " .. player.Name)
+        
+        pcall(function()
+            remoteEvent:FireClient(player, "LoadData", data)
+        end)
+    end)
+end)
+
+Players.PlayerRemoving:Connect(function(player)
+    print("👋 [PLAYER] " .. player.Name .. " leaving")
+    
+    local userId = player.UserId
+    
+    if playerDataCache[userId] then
+        local success = pcall(function()
+            local dataKey = getDataKey(userId)
+            MusicDataStore:SetAsync(dataKey, playerDataCache[userId])
+        end)
+        
+        if success then
+            print("💾 [SAVE] Final save for " .. player.Name)
+        end
+        
+        playerDataCache[userId] = nil
+    end
+end)
+
+-- ═══════════════════════════════════════════════
+-- REMOTE EVENT HANDLER
+-- ═══════════════════════════════════════════════
+
+remoteEvent.OnServerEvent:Connect(function(player, action, data)
+    local userId = player.UserId
+    
+    if action == "LoadData" then
+        local playerData = playerDataCache[userId] or loadPlayerData(player)
+        debug_log("REQUEST", player.Name .. " requested LoadData")
+        pcall(function()
+            remoteEvent:FireClient(player, "LoadData", playerData)
+        end)
+        
+    elseif action == "SaveData" then
+        if data then
+            savePlayerData(player, data)
+        end
+        
+    elseif action == "AddSong" then
+        local playerData = playerDataCache[userId] or loadPlayerData(player)
+        if data and data.soundId and data.title then
+            local isValid, validatedId = validateSoundId(data.soundId)
+            if not isValid then
+                pcall(function()
+                    remoteEvent:FireClient(player, "Error", validatedId)
+                end)
+            else
+                if not playerData.customSongs then
+                    playerData.customSongs = {}
+                end
+                
+                if #playerData.customSongs >= CONFIG.MAX_CUSTOM_SONGS then
+                    pcall(function()
+                        remoteEvent:FireClient(player, "Error", "Maximum custom songs reached: " .. CONFIG.MAX_CUSTOM_SONGS)
+                    end)
+                else
+                    table.insert(playerData.customSongs, {
+                        id = validatedId,
+                        title = data.title:sub(1, 100),
+                        addedAt = os.time()
+                    })
+                    
+                    savePlayerData(player, playerData)
+                    pcall(function()
+                        remoteEvent:FireClient(player, "SongAdded", {id = validatedId, title = data.title})
+                    end)
+                    print("✅ [ADD] Song added for " .. player.Name .. ": " .. data.title)
+                end
+            end
+        end
+        
+    elseif action == "RemoveSong" then
+        local playerData = playerDataCache[userId] or loadPlayerData(player)
+        if data and data.index then
+            if playerData.customSongs and playerData.customSongs[data.index] then
+                local removed = playerData.customSongs[data.index]
+                table.remove(playerData.customSongs, data.index)
+                savePlayerData(player, playerData)
+                pcall(function()
+                    remoteEvent:FireClient(player, "SongRemoved", {index = data.index})
+                end)
+                print("✅ [REMOVE] Song removed for " .. player.Name)
+            else
+                pcall(function()
+                    remoteEvent:FireClient(player, "Error", "Song not found")
+                end)
+            end
+        end
+        
+    elseif action == "ToggleFavorite" then
+        local playerData = playerDataCache[userId] or loadPlayerData(player)
+        if data and data.songId then
+            if not playerData.favorites then
+                playerData.favorites = {}
+            end
+            
+            local index = table.find(playerData.favorites, data.songId)
+            if index then
+                table.remove(playerData.favorites, index)
+                print("⭐ [FAV] Removed favorite for " .. player.Name)
+            else
+                table.insert(playerData.favorites, data.songId)
+                print("⭐ [FAV] Added favorite for " .. player.Name)
+            end
+            
+            savePlayerData(player, playerData)
+            pcall(function()
+                remoteEvent:FireClient(player, "FavoriteToggled", {songId = data.songId})
+            end)
+        end
+        
+    elseif action == "CreatePlaylist" then
+        local playerData = playerDataCache[userId] or loadPlayerData(player)
+        if data and data.name then
+            if not playerData.playlists then
+                playerData.playlists = {}
+            end
+            
+            if #playerData.playlists >= CONFIG.MAX_PLAYLISTS then
+                pcall(function()
+                    remoteEvent:FireClient(player, "Error", "Maximum playlists reached: " .. CONFIG.MAX_PLAYLISTS)
+                end)
+            else
+                table.insert(playerData.playlists, {
+                    name = data.name:sub(1, 50),
+                    songs = {},
+                    createdAt = os.time()
+                })
+                
+                savePlayerData(player, playerData)
+                pcall(function()
+                    remoteEvent:FireClient(player, "PlaylistCreated", {name = data.name})
+                end)
+                print("📋 [PLAYLIST] Created: " .. data.name .. " for " .. player.Name)
+            end
+        end
+        
+    elseif action == "AddToPlaylist" then
+        local playerData = playerDataCache[userId] or loadPlayerData(player)
+        if data and data.playlistIndex and data.songId then
+            if playerData.playlists and playerData.playlists[data.playlistIndex] then
+                local playlist = playerData.playlists[data.playlistIndex]
+                if not table.find(playlist.songs, data.songId) then
+                    table.insert(playlist.songs, data.songId)
+                    savePlayerData(player, playerData)
+                    pcall(function()
+                        remoteEvent:FireClient(player, "AddedToPlaylist", {playlistIndex = data.playlistIndex})
+                    end)
+                end
+            else
+                pcall(function()
+                    remoteEvent:FireClient(player, "Error", "Playlist not found")
+                end)
+            end
+        end
+    end
+end)
+
+-- ═══════════════════════════════════════════════
+-- REMOTE FUNCTION HANDLER
+-- ═══════════════════════════════════════════════
+
+remoteFunction.OnServerInvoke = function(player, action, data)
+    if action == "ValidateSoundId" then
+        local isValid, result = validateSoundId(data)
+        return isValid, result
+    elseif action == "CheckSongExists" then
+        local playerData = playerDataCache[player.UserId]
+        if playerData and playerData.customSongs then
+            for _, song in ipairs(playerData.customSongs) do
+                if song.id == data then
+                    return true
+                end
+            end
+        end
+        return false
+    end
+    return false, "Unknown request"
+end
+
+-- ═══════════════════════════════════════════════
+-- AUTO-SAVE SYSTEM
+-- ═══════════════════════════════════════════════
+
+task.spawn(function()
+    local autoSaveCount = 0
+    while true do
+        task.wait(CONFIG.AUTOSAVE_INTERVAL)
+        
+        autoSaveCount = autoSaveCount + 1
+        local onlinePlayerCount = #Players:GetPlayers()
+        
+        for _, player in ipairs(Players:GetPlayers()) do
+            local userId = player.UserId
+            if playerDataCache[userId] then
+                savePlayerData(player, playerDataCache[userId])
+            end
+        end
+        
+        print("💾 [AUTOSAVE] Cycle #" .. autoSaveCount .. " - Saved " .. onlinePlayerCount .. " players")
+    end
+end)
+
+-- ═══════════════════════════════════════════════
+-- SHUTDOWN HANDLER
+-- ═══════════════════════════════════════════════
+
+game:BindToClose(function()
+    print("🛑 [SHUTDOWN] Server shutting down, saving all data...")
+    
+    for _, player in ipairs(Players:GetPlayers()) do
+        local userId = player.UserId
+        if playerDataCache[userId] then
+            pcall(function()
+                local dataKey = getDataKey(userId)
+                MusicDataStore:SetAsync(dataKey, playerDataCache[userId])
+            end)
+        end
+    end
+    
+    task.wait(2)
+    print("✅ [SHUTDOWN] Shutdown save complete")
+end)
+
+-- ═══════════════════════════════════════════════
+-- INITIALIZATION
+-- ═══════════════════════════════════════════════
+
+print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+print("  ✨ MUSIC PLAYER SERVER ✨")
+print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+print("💾 DataStore: " .. CONFIG.DATASTORE_NAME)
+print("⏰ Auto-save: Every " .. CONFIG.AUTOSAVE_INTERVAL .. " seconds")
+print("📊 Max songs: " .. CONFIG.MAX_CUSTOM_SONGS)
+print("📋 Max playlists: " .. CONFIG.MAX_PLAYLISTS)
+print("🔧 Debug Mode: " .. (CONFIG.DEBUG_MODE and "ON" or "OFF"))
+print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
