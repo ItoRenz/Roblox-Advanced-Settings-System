@@ -1,0 +1,924 @@
+--[[
+    ═══════════════════════════════════════════════
+    GAMEPLAY TAB
+    ═══════════════════════════════════════════════
+    Author: ItoRenz00
+    Place in: StarterPlayer > StarterPlayerScripts > AdvancedSettings > Tabs > GameplayTab
+    Type: ModuleScript
+    ═══════════════════════════════════════════════
+]]
+
+local Players = game:GetService("Players")
+local StarterGui = game:GetService("StarterGui")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local LocalPlayer = Players.LocalPlayer
+local PlayerGui = LocalPlayer:WaitForChild("PlayerGui")
+
+local GameplayTab = {}
+
+-- ═══════════════════════════════════════════════
+-- SCRIPTS
+-- ═══════════════════════════════════════════════
+
+local scripts = {
+    hideTitle = {
+        enabled = false, 
+        conns = {}, 
+        hidden = {},
+        toggleUI = nil
+    },
+    hidePlayers = {
+        enabled = false, 
+        conns = {}, 
+        hiddenP = {}, 
+        origT = {},
+        toggleUI = nil
+    },
+    hideUI = {
+        enabled = false, 
+        origS = {}, 
+        coreS = {},
+        hiddenTitles = {},
+        toggleUI = nil
+    },
+    spectator = {
+        enabled = false,
+        isSpec = false,
+        idx = 1,
+        list = {},
+        cam = workspace.CurrentCamera,
+        gui = nil,
+        conns = {},
+        origSub = nil,
+        coreE = {},
+        hiddenG = {},
+        hiddenTitles = {},
+        prev = nil,
+        next = nil,
+        info = nil,
+        toggleUI = nil
+    }
+}
+
+-- Hide Title Script
+function scripts.hideTitle:hideGui(character, hide)
+    if not character then return end
+    pcall(function()
+        for _, obj in pairs(character:GetDescendants()) do
+            if obj:IsA("BillboardGui") then
+                if hide then
+                    self.hidden[obj] = obj.Enabled
+                    obj.Enabled = false
+                elseif self.hidden[obj] ~= nil then
+                    obj.Enabled = self.hidden[obj]
+                    self.hidden[obj] = nil
+                end
+            end
+        end
+        local humanoid = character:FindFirstChildOfClass("Humanoid")
+        if humanoid then
+            if hide then
+                self.hidden[humanoid] = humanoid.DisplayDistanceType
+                humanoid.DisplayDistanceType = Enum.HumanoidDisplayDistanceType.None
+            elseif self.hidden[humanoid] ~= nil then
+                humanoid.DisplayDistanceType = self.hidden[humanoid]
+                self.hidden[humanoid] = nil
+            end
+        end
+    end)
+end
+
+function scripts.hideTitle:toggle()
+    self.enabled = not self.enabled
+    for _, p in pairs(Players:GetPlayers()) do
+        if p.Character then
+            self:hideGui(p.Character, self.enabled)
+        end
+    end
+    if self.toggleUI then
+        self.toggleUI(self.enabled)
+    end
+    return self.enabled
+end
+
+function scripts.hideTitle:setup()
+    local function onChar(c)
+        task.wait(0.5)
+        if self.enabled then
+            self:hideGui(c, true)
+        end
+    end
+    
+    for _, p in pairs(Players:GetPlayers()) do
+        if p.Character then
+            onChar(p.Character)
+        end
+        table.insert(self.conns, p.CharacterAdded:Connect(onChar))
+    end
+    
+    table.insert(self.conns, Players.PlayerAdded:Connect(function(p)
+        table.insert(self.conns, p.CharacterAdded:Connect(onChar))
+    end))
+end
+
+-- Hide Players Script
+function scripts.hidePlayers:hideChar(c)
+    if not c or self.hiddenP[c] then return end
+    self.hiddenP[c] = true
+    for _, o in pairs(c:GetDescendants()) do
+        pcall(function()
+            if o:IsA("BasePart") then
+                self.origT[o] = o.Transparency
+                o.Transparency = 1
+                o.CanCollide = false
+            elseif o:IsA("Decal") or o:IsA("Texture") then
+                self.origT[o] = o.Transparency
+                o.Transparency = 1
+            elseif o:IsA("BillboardGui") then
+                self.origT[o] = o.Enabled
+                o.Enabled = false
+            end
+        end)
+    end
+end
+
+function scripts.hidePlayers:showChar(c)
+    if not c or not self.hiddenP[c] then return end
+    self.hiddenP[c] = nil
+    for _, o in pairs(c:GetDescendants()) do
+        pcall(function()
+            if o:IsA("BasePart") then
+                o.Transparency = self.origT[o] or 0
+                if o.Name ~= "HumanoidRootPart" then
+                    o.CanCollide = true
+                end
+            elseif o:IsA("Decal") or o:IsA("Texture") then
+                o.Transparency = self.origT[o] or 0
+            elseif o:IsA("BillboardGui") and self.origT[o] ~= nil then
+                o.Enabled = self.origT[o]
+            end
+        end)
+    end
+end
+
+function scripts.hidePlayers:toggle()
+    self.enabled = not self.enabled
+    for _, p in pairs(Players:GetPlayers()) do
+        if p ~= LocalPlayer and p.Character then
+            if self.enabled then
+                self:hideChar(p.Character)
+            else
+                self:showChar(p.Character)
+            end
+        end
+    end
+    if self.toggleUI then
+        self.toggleUI(self.enabled)
+    end
+    return self.enabled
+end
+
+function scripts.hidePlayers:setup()
+    for _, p in pairs(Players:GetPlayers()) do
+        if p ~= LocalPlayer then
+            table.insert(self.conns, p.CharacterAdded:Connect(function(c)
+                task.wait(0.5)
+                if self.enabled then
+                    self:hideChar(c)
+                end
+            end))
+        end
+    end
+end
+
+-- Hide UI Script
+function scripts.hideUI:hideTitles()
+    for _, p in pairs(Players:GetPlayers()) do
+        if p.Character then
+            pcall(function()
+                for _, obj in pairs(p.Character:GetDescendants()) do
+                    if obj:IsA("BillboardGui") then
+                        if self.hiddenTitles[obj] == nil then
+                            self.hiddenTitles[obj] = obj.Enabled
+                            obj.Enabled = false
+                        end
+                    end
+                end
+                
+                local humanoid = p.Character:FindFirstChildOfClass("Humanoid")
+                if humanoid then
+                    if self.hiddenTitles[humanoid] == nil then
+                        self.hiddenTitles[humanoid] = humanoid.DisplayDistanceType
+                        humanoid.DisplayDistanceType = Enum.HumanoidDisplayDistanceType.None
+                    end
+                end
+            end)
+        end
+    end
+end
+
+function scripts.hideUI:showTitles()
+    for obj, state in pairs(self.hiddenTitles) do
+        pcall(function()
+            if obj and obj.Parent then
+                if obj:IsA("BillboardGui") then
+                    obj.Enabled = state
+                elseif obj:IsA("Humanoid") then
+                    obj.DisplayDistanceType = state
+                end
+            end
+        end)
+    end
+    self.hiddenTitles = {}
+end
+
+function scripts.hideUI:toggle()
+    self.enabled = not self.enabled
+    
+    if self.enabled then
+        self.origS = {}
+        self.coreS = {}
+        
+        local coreGuis = {Enum.CoreGuiType.Health, Enum.CoreGuiType.Backpack}
+        for _, g in pairs(coreGuis) do
+            pcall(function()
+                local e = StarterGui:GetCoreGuiEnabled(g)
+                self.coreS[g] = e
+                if e then
+                    StarterGui:SetCoreGuiEnabled(g, false)
+                end
+            end)
+        end
+        
+        for _, g in pairs(PlayerGui:GetChildren()) do
+            if g.Name ~= "AdvancedSettingsGui" and g:IsA("ScreenGui") then
+                self.origS[g] = g.Enabled
+                g.Enabled = false
+            end
+        end
+        
+        self:hideTitles()
+        
+        self.titleMonitor = game:GetService("RunService").Heartbeat:Connect(function()
+            if self.enabled then
+                for _, p in pairs(Players:GetPlayers()) do
+                    if p.Character then
+                        pcall(function()
+                            for _, obj in pairs(p.Character:GetDescendants()) do
+                                if obj:IsA("BillboardGui") and obj.Enabled then
+                                    if self.hiddenTitles[obj] == nil then
+                                        self.hiddenTitles[obj] = true
+                                    end
+                                    obj.Enabled = false
+                                end
+                            end
+                        end)
+                    end
+                end
+            end
+        end)
+        
+    else
+        for g, e in pairs(self.coreS) do
+            pcall(function()
+                if e then
+                    StarterGui:SetCoreGuiEnabled(g, true)
+                end
+            end)
+        end
+        self.coreS = {}
+        
+        for g, s in pairs(self.origS) do
+            pcall(function()
+                if g.Parent then
+                    g.Enabled = s
+                end
+            end)
+        end
+        self.origS = {}
+        
+        self:showTitles()
+        
+        if self.titleMonitor then
+            self.titleMonitor:Disconnect()
+            self.titleMonitor = nil
+        end
+    end
+    
+    if self.toggleUI then
+        self.toggleUI(self.enabled)
+    end
+    
+    return self.enabled
+end
+
+function scripts.hideUI:setup()
+    table.insert(self.conns or {}, Players.PlayerAdded:Connect(function(player)
+        player.CharacterAdded:Connect(function(character)
+            task.wait(0.5)
+            if self.enabled then
+                pcall(function()
+                    for _, obj in pairs(character:GetDescendants()) do
+                        if obj:IsA("BillboardGui") then
+                            self.hiddenTitles[obj] = obj.Enabled
+                            obj.Enabled = false
+                        end
+                    end
+                    
+                    local humanoid = character:FindFirstChildOfClass("Humanoid")
+                    if humanoid then
+                        self.hiddenTitles[humanoid] = humanoid.DisplayDistanceType
+                        humanoid.DisplayDistanceType = Enum.HumanoidDisplayDistanceType.None
+                    end
+                end)
+            end
+        end)
+    end))
+end
+
+-- ═══════════════════════════════════════════════
+-- SPECTATOR SCRIPT
+-- ═══════════════════════════════════════════════
+
+function scripts.spectator:hideTitles()
+    for _, p in pairs(Players:GetPlayers()) do
+        if p.Character then
+            pcall(function()
+                for _, obj in pairs(p.Character:GetDescendants()) do
+                    if obj:IsA("BillboardGui") then
+                        self.hiddenTitles[obj] = obj.Enabled
+                        obj.Enabled = false
+                    end
+                end
+                
+                local humanoid = p.Character:FindFirstChildOfClass("Humanoid")
+                if humanoid then
+                    self.hiddenTitles[humanoid] = humanoid.DisplayDistanceType
+                    humanoid.DisplayDistanceType = Enum.HumanoidDisplayDistanceType.None
+                end
+            end)
+        end
+    end
+end
+
+function scripts.spectator:showTitles()
+    for obj, state in pairs(self.hiddenTitles) do
+        pcall(function()
+            if obj and obj.Parent then
+                if obj:IsA("BillboardGui") then
+                    obj.Enabled = state
+                elseif obj:IsA("Humanoid") then
+                    obj.DisplayDistanceType = state
+                end
+            end
+        end)
+    end
+    self.hiddenTitles = {}
+end
+
+function scripts.spectator:hideGameUI()
+    local coreGuis = {Enum.CoreGuiType.Health, Enum.CoreGuiType.Backpack}
+    for _, g in pairs(coreGuis) do
+        pcall(function()
+            local e = StarterGui:GetCoreGuiEnabled(g)
+            self.coreE[g] = e
+            if e then
+                StarterGui:SetCoreGuiEnabled(g, false)
+            end
+        end)
+    end
+    for _, g in pairs(PlayerGui:GetChildren()) do
+        if g:IsA("ScreenGui") and g.Name ~= "AdvancedSettingsGui" and g.Name ~= "SpectatorControlsGUI" then
+            self.hiddenG[g] = g.Enabled
+            g.Enabled = false
+        end
+    end
+end
+
+function scripts.spectator:showGameUI()
+    for g, e in pairs(self.coreE) do
+        pcall(function()
+            if e then
+                StarterGui:SetCoreGuiEnabled(g, true)
+            end
+        end)
+    end
+    self.coreE = {}
+    for g, e in pairs(self.hiddenG) do
+        pcall(function()
+            if g and g.Parent then
+                g.Enabled = e
+            end
+        end)
+    end
+    self.hiddenG = {}
+end
+
+function scripts.spectator:updateList()
+    self.list = {}
+    for _, p in pairs(Players:GetPlayers()) do
+        if p.Character and p.Character:FindFirstChild("Humanoid") then
+            table.insert(self.list, p)
+        end
+    end
+end
+
+function scripts.spectator:specPlayer(p)
+    if not (p and p.Character and p.Character:FindFirstChild("Humanoid")) then
+        return false
+    end
+    self.cam.CameraSubject = p.Character.Humanoid
+    return true
+end
+
+function scripts.spectator:stopSpec()
+    self.isSpec = false
+    if LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("Humanoid") then
+        self.cam.CameraSubject = LocalPlayer.Character.Humanoid
+    elseif self.origSub then
+        self.cam.CameraSubject = self.origSub
+    end
+    self:showGameUI()
+    self:showTitles()
+end
+
+function scripts.spectator:createUI(isMobile)
+    if self.gui then return end
+    
+    local g = Instance.new("ScreenGui")
+    g.Name = "SpectatorControlsGUI"
+    g.ResetOnSpawn = false
+    g.DisplayOrder = 999998
+    g.Parent = PlayerGui
+    
+    local function createNav(txt, pos, size, textSize)
+        local b = Instance.new("TextButton")
+        b.Text = txt
+        b.Font = Enum.Font.GothamBold
+        b.TextColor3 = Color3.fromRGB(255, 255, 255)
+        b.BackgroundTransparency = 1
+        b.TextSize = textSize
+        b.Size = size
+        b.Position = pos
+        b.Visible = false
+        b.Parent = g
+        return b
+    end
+    
+    if isMobile then
+        self.prev = createNav("◀", UDim2.new(0, 10, 0.5, -30), UDim2.new(0, 50, 0, 60), 32)
+    else
+        self.prev = createNav("◀", UDim2.new(0, 15, 0.5, -40), UDim2.new(0, 60, 0, 80), 40)
+    end
+    
+    if isMobile then
+        self.next = createNav("▶", UDim2.new(1, -60, 0.5, -30), UDim2.new(0, 50, 0, 60), 32)
+    else
+        self.next = createNav("▶", UDim2.new(1, -75, 0.5, -40), UDim2.new(0, 60, 0, 80), 40)
+    end
+    
+    self.info = Instance.new("TextLabel")
+    self.info.Text = ""
+    self.info.Font = Enum.Font.GothamBold
+    self.info.TextColor3 = Color3.fromRGB(255, 255, 255)
+    self.info.BackgroundColor3 = Color3.new(0, 0, 0)
+    self.info.BackgroundTransparency = 0.5
+    self.info.BorderSizePixel = 0
+    self.info.Visible = false
+    self.info.Parent = g
+    
+    if isMobile then
+        self.info.Size = UDim2.new(0, 240, 0, 20)
+        self.info.Position = UDim2.new(0.5, -120, 0.85, 20)
+        self.info.TextSize = 14
+    else
+        self.info.Size = UDim2.new(0, 280, 0, 30)
+        self.info.Position = UDim2.new(0.5, -140, 0.85, 60)
+        self.info.TextSize = 16
+    end
+    
+    local corner = Instance.new("UICorner")
+    corner.CornerRadius = UDim.new(0, 10)
+    corner.Parent = self.info
+    
+    self.gui = g
+    
+    local function nav(dir)
+        if not (self.isSpec and #self.list > 0) then return end
+        self:updateList()
+        if #self.list == 0 then
+            self:stopSpec()
+            self.enabled = false
+            if self.toggleUI then
+                self.toggleUI(false)
+            end
+            self.prev.Visible = false
+            self.next.Visible = false
+            self.info.Visible = false
+            return
+        end
+        
+        if dir == "prev" then
+            self.idx = self.idx - 1
+            if self.idx < 1 then
+                self.idx = #self.list
+            end
+        else
+            self.idx = self.idx + 1
+            if self.idx > #self.list then
+                self.idx = 1
+            end
+        end
+        
+        if self:specPlayer(self.list[self.idx]) then
+            local p = self.list[self.idx]
+            self.info.Text = p.DisplayName .. " (@" .. p.Name .. ")"
+        end
+    end
+    
+    self.prev.MouseButton1Click:Connect(function() nav("prev") end)
+    self.next.MouseButton1Click:Connect(function() nav("next") end)
+end
+
+function scripts.spectator:toggle(isMobile)
+    self.enabled = not self.enabled
+    self.isSpec = self.enabled
+    
+    if not self.gui then
+        self:createUI(isMobile)
+    end
+    
+    if self.isSpec then
+        self.origSub = self.cam.CameraSubject
+        self:updateList()
+        if #self.list > 0 then
+            self.idx = 1
+            
+            if _G.AdvancedSettings.menuOpen then
+                _G.AdvancedSettings.toggleMenu()
+            end
+            
+            self:hideGameUI()
+            self:hideTitles()
+            
+            if self:specPlayer(self.list[1]) then
+                self.prev.Visible = true
+                self.next.Visible = true
+                self.info.Visible = true
+                local p = self.list[1]
+                self.info.Text = p.DisplayName .. " (@" .. p.Name .. ")"
+            else
+                self:stopSpec()
+                self.enabled = false
+            end
+        else
+            self.info.Visible = true
+            self.info.Text = "No players to spectate!"
+            task.delay(2, function() 
+                if self.info then
+                    self.info.Visible = false 
+                end
+            end)
+            self.isSpec = false
+            self.enabled = false
+        end
+    else
+        self:stopSpec()
+        self.prev.Visible = false
+        self.next.Visible = false
+        self.info.Visible = false
+    end
+    
+    if self.toggleUI then
+        self.toggleUI(self.enabled)
+    end
+    
+    return self.enabled
+end
+
+function scripts.spectator:setup()
+    table.insert(self.conns, Players.PlayerRemoving:Connect(function(r)
+        if not self.isSpec then return end
+        self:updateList()
+        if #self.list == 0 then
+            self:stopSpec()
+            self.enabled = false
+            if self.toggleUI then
+                self.toggleUI(false)
+            end
+            if self.prev then
+                self.prev.Visible = false
+            end
+            if self.next then
+                self.next.Visible = false
+            end
+            if self.info then
+                self.info.Visible = false
+            end
+        elseif self.list[self.idx] == nil then
+            self.idx = 1
+            if self:specPlayer(self.list[1]) then
+                local p = self.list[1]
+                if self.info then
+                    self.info.Text = p.DisplayName .. " (@" .. p.Name .. ")"
+                end
+            end
+        end
+    end))
+end
+
+-- ═══════════════════════════════════════════════
+-- RESET TO BASE ACTION
+-- ═══════════════════════════════════════════════
+
+local resetEvent = ReplicatedStorage:FindFirstChild("ResetCheckpointEvent") or Instance.new("RemoteEvent")
+if not resetEvent.Parent then
+    resetEvent.Name = "ResetCheckpointEvent"
+    resetEvent.Parent = ReplicatedStorage
+end
+
+local function resetToBase()
+    local character = LocalPlayer.Character
+    if not character or not character:FindFirstChild("HumanoidRootPart") then
+        return false, "Character not found!"
+    end
+    
+    pcall(function()
+        resetEvent:FireServer("ResetCheckpoint")
+    end)
+    
+    local basecamp = workspace:FindFirstChild("Basecamp") or workspace:FindFirstChild("SpawnLocation")
+    local hrp = character.HumanoidRootPart
+    
+    if basecamp then
+        local spawnPart = basecamp:IsA("BasePart") and basecamp or basecamp:FindFirstChildWhichIsA("BasePart", true)
+        if spawnPart then
+            character:MoveTo(spawnPart.Position + Vector3.new(0, 3, 0))
+        end
+    else
+        character:MoveTo(Vector3.new(0, 50, 0))
+    end
+    
+    if hrp then
+        hrp.AssemblyLinearVelocity = Vector3.zero
+        hrp.AssemblyAngularVelocity = Vector3.zero
+    end
+    
+    local humanoid = character:FindFirstChildOfClass("Humanoid")
+    if humanoid then
+        humanoid.Health = humanoid.MaxHealth
+    end
+    
+    return true, "Reset successful!"
+end
+
+-- ═══════════════════════════════════════════════
+-- UI CREATION WITH ANTI OVER-SCROLL
+-- ═══════════════════════════════════════════════
+
+function GameplayTab.createContent(contentScroll, colors, isMobile, utils)
+    -- SETUP ANTI OVER-SCROLL & NO HORIZONTAL SCROLL
+    contentScroll.ScrollingDirection = Enum.ScrollingDirection.Y
+    contentScroll.ElasticBehavior = Enum.ElasticBehavior.Never
+    
+    -- Monitor scroll position
+    contentScroll:GetPropertyChangedSignal("CanvasPosition"):Connect(function()
+        -- BLOCK HORIZONTAL SCROLL
+        if contentScroll.CanvasPosition.X ~= 0 then
+            contentScroll.CanvasPosition = Vector2.new(0, contentScroll.CanvasPosition.Y)
+        end
+        
+        -- BLOCK VERTICAL OVER-SCROLL
+        local maxScroll = contentScroll.CanvasSize.Y.Offset - contentScroll.AbsoluteSize.Y
+        
+        if maxScroll <= 0 then
+            contentScroll.CanvasPosition = Vector2.new(0, 0)
+            return
+        end
+        
+        if contentScroll.CanvasPosition.Y < 0 then
+            contentScroll.CanvasPosition = Vector2.new(0, 0)
+        elseif contentScroll.CanvasPosition.Y > maxScroll then
+            contentScroll.CanvasPosition = Vector2.new(0, maxScroll)
+        end
+    end)
+    
+    local features = {
+        {id = "hideTitle", name = "Hide Title", desc = "Hide all player nametags", type = "toggle"},
+        {id = "hidePlayers", name = "Hide Players", desc = "Make all players invisible", type = "toggle"},
+        {id = "hideUI", name = "Hide All UI", desc = "Hide Health, Backpack & Titles", type = "toggle"},
+        {id = "spectator", name = "Spectator Mode", desc = "Watch other players", type = "toggle", needsIsMobile = true},
+        {id = "resetBase", name = "Reset to Base", desc = "Teleport to Basecamp", type = "action"}
+    }
+    
+    for order, feature in ipairs(features) do
+        local card = Instance.new("Frame")
+        card.Size = UDim2.new(1,-4,0,isMobile and 38 or 50)
+        card.BackgroundColor3 = colors.card
+        card.BackgroundTransparency = 0.5
+        card.BorderSizePixel = 0
+        card.ZIndex = 202
+        card.LayoutOrder = order
+        card.Parent = contentScroll
+        utils.corner(card, 10)
+        
+        local stroke = Instance.new("UIStroke")
+        stroke.Color = colors.divider
+        stroke.Thickness = 1
+        stroke.Transparency = 0.6
+        stroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
+        stroke.Parent = card
+        
+        local textContainer = Instance.new("Frame")
+        textContainer.Size = UDim2.new(1, feature.type == "action" and -80 or -70, 1, 0)
+        textContainer.Position = UDim2.new(0,isMobile and 8 or 15,0,0)
+        textContainer.BackgroundTransparency = 1
+        textContainer.ZIndex = 203
+        textContainer.Parent = card
+        
+        local titleLabel = Instance.new("TextLabel")
+        titleLabel.Size = UDim2.new(1,0,0,isMobile and 16 or 20)
+        titleLabel.Position = UDim2.new(0,0,0,isMobile and 4 or 8)
+        titleLabel.BackgroundTransparency = 1
+        titleLabel.Text = feature.name
+        titleLabel.TextColor3 = colors.text
+        titleLabel.Font = Enum.Font.GothamBold
+        titleLabel.TextSize = isMobile and 10 or 13
+        titleLabel.TextXAlignment = Enum.TextXAlignment.Left
+        titleLabel.ZIndex = 204
+        titleLabel.Parent = textContainer
+        
+        local descLabel = Instance.new("TextLabel")
+        descLabel.Size = UDim2.new(1,0,0,isMobile and 12 or 16)
+        descLabel.Position = UDim2.new(0,0,0,isMobile and 20 or 28)
+        descLabel.BackgroundTransparency = 1
+        descLabel.Text = feature.desc
+        descLabel.TextColor3 = colors.textDark
+        descLabel.Font = Enum.Font.Gotham
+        descLabel.TextSize = isMobile and 8 or 11
+        descLabel.TextXAlignment = Enum.TextXAlignment.Left
+        descLabel.ZIndex = 204
+        descLabel.Parent = textContainer
+        
+        if feature.type == "toggle" then
+            -- Toggle Switch
+            local toggleBg = Instance.new("Frame")
+            toggleBg.Size = UDim2.new(0,isMobile and 32 or 38,0,isMobile and 16 or 20)
+            toggleBg.Position = UDim2.new(1,isMobile and -36 or -50,0.5,isMobile and -8 or -10)
+            toggleBg.BackgroundColor3 = colors.toggleOff
+            toggleBg.BorderSizePixel = 0
+            toggleBg.ZIndex = 203
+            toggleBg.Parent = card
+            utils.corner(toggleBg, 10)
+            
+            local toggleStroke = Instance.new("UIStroke")
+            toggleStroke.Color = colors.divider
+            toggleStroke.Thickness = 1
+            toggleStroke.Transparency = 0.7
+            toggleStroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
+            toggleStroke.Parent = toggleBg
+            
+            local toggleKnob = Instance.new("Frame")
+            toggleKnob.Size = UDim2.new(0,isMobile and 12 or 16,0,isMobile and 12 or 16)
+            toggleKnob.Position = UDim2.new(0,2,0.5,isMobile and -6 or -8)
+            toggleKnob.BackgroundColor3 = colors.text
+            toggleKnob.BorderSizePixel = 0
+            toggleKnob.ZIndex = 204
+            toggleKnob.Parent = toggleBg
+            utils.corner(toggleKnob, 8)
+            
+            local s = scripts[feature.id]
+            
+            if s and s.enabled then
+                toggleBg.BackgroundColor3 = colors.toggleOn
+                toggleStroke.Color = colors.accent
+                toggleStroke.Transparency = 0
+                toggleKnob.Position = UDim2.new(1,isMobile and -14 or -18,0.5,isMobile and -6 or -8)
+            end
+            
+            if s then
+                s.toggleUI = function(enabled)
+                    if enabled then
+                        utils.tween(toggleBg, TweenInfo.new(0.2), {BackgroundColor3 = colors.toggleOn})
+                        utils.tween(toggleStroke, TweenInfo.new(0.2), {Color = colors.accent, Transparency = 0})
+                        utils.tween(toggleKnob, TweenInfo.new(0.2), {Position = UDim2.new(1,isMobile and -14 or -18,0.5,isMobile and -6 or -8)})
+                    else
+                        utils.tween(toggleBg, TweenInfo.new(0.2), {BackgroundColor3 = colors.toggleOff})
+                        utils.tween(toggleStroke, TweenInfo.new(0.2), {Color = colors.divider, Transparency = 0.7})
+                        utils.tween(toggleKnob, TweenInfo.new(0.2), {Position = UDim2.new(0,2,0.5,isMobile and -6 or -8)})
+                    end
+                end
+            end
+            
+            local toggleBtn = Instance.new("TextButton")
+            toggleBtn.Size = UDim2.new(1,0,1,0)
+            toggleBtn.BackgroundTransparency = 1
+            toggleBtn.Text = ""
+            toggleBtn.ZIndex = 205
+            toggleBtn.Parent = toggleBg
+            
+            toggleBtn.MouseButton1Click:Connect(function()
+                if s then
+                    if feature.needsIsMobile then
+                        s:toggle(isMobile)
+                    else
+                        s:toggle()
+                    end
+                end
+            end)
+            
+        elseif feature.type == "action" then
+            -- Execute Button
+            local actionBtn = Instance.new("TextButton")
+            actionBtn.Size = UDim2.new(0, isMobile and 65 or 70, 0, isMobile and 26 or 28)
+            actionBtn.Position = UDim2.new(1, isMobile and -72 or -80, 0.5, isMobile and -13 or -14)
+            actionBtn.BackgroundColor3 = colors.accent
+            actionBtn.BorderSizePixel = 0
+            actionBtn.Text = ""
+            actionBtn.AutoButtonColor = false
+            actionBtn.ZIndex = 203
+            actionBtn.Parent = card
+            utils.corner(actionBtn, 6)
+            
+            local actionLabel = Instance.new("TextLabel")
+            actionLabel.Size = UDim2.new(1, 0, 1, 0)
+            actionLabel.BackgroundTransparency = 1
+            actionLabel.Text = "Execute"
+            actionLabel.TextColor3 = colors.bg
+            actionLabel.Font = Enum.Font.GothamBold
+            actionLabel.TextSize = isMobile and 9 or 11
+            actionLabel.ZIndex = 204
+            actionLabel.Parent = actionBtn
+            
+            actionBtn.MouseButton1Click:Connect(function()
+                if _G.AdvancedSettings.menuOpen then
+                    _G.AdvancedSettings.toggleMenu()
+                end
+                
+                local success, message = resetToBase()
+                print(message)
+            end)
+            
+            actionBtn.MouseEnter:Connect(function()
+                utils.tween(actionBtn, TweenInfo.new(0.15), {BackgroundColor3 = Color3.fromRGB(255, 220, 130)})
+            end)
+            
+            actionBtn.MouseLeave:Connect(function()
+                utils.tween(actionBtn, TweenInfo.new(0.15), {BackgroundColor3 = colors.accent})
+            end)
+        end
+        
+        card.MouseEnter:Connect(function()
+            utils.tween(card, TweenInfo.new(0.15), {BackgroundTransparency = 0.3})
+        end)
+        
+        card.MouseLeave:Connect(function()
+            utils.tween(card, TweenInfo.new(0.15), {BackgroundTransparency = 0.5})
+        end)
+    end
+end
+
+-- ═══════════════════════════════════════════════
+-- SETUP & CLEANUP
+-- ═══════════════════════════════════════════════
+
+function GameplayTab.setup()
+    scripts.hideTitle:setup()
+    scripts.hidePlayers:setup()
+    scripts.hideUI:setup()
+    scripts.spectator:setup()
+    print("✅ Gameplay Tab: Setup complete")
+end
+
+function GameplayTab.cleanup()
+    for _, script in pairs(scripts) do
+        if script.conns then
+            for _, conn in ipairs(script.conns) do
+                pcall(function() conn:Disconnect() end)
+            end
+        end
+        if script.titleMonitor then
+            script.titleMonitor:Disconnect()
+            script.titleMonitor = nil
+        end
+        
+        if script.isSpec then
+            script:stopSpec()
+        end
+        if script.gui then
+            script.gui:Destroy()
+            script.gui = nil
+        end
+        
+        if script.enabled then
+            if script.id == "spectator" then
+                script:toggle(false)
+            else
+                script:toggle()
+            end
+        end
+    end
+    print("🧹 Gameplay Tab: Cleanup complete")
+end
+
+return GameplayTab
