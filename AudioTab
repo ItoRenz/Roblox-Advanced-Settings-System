@@ -1,0 +1,1006 @@
+--[[
+    ═══════════════════════════════════════════════
+    AUDIO TAB
+    ═══════════════════════════════════════════════
+    Author: ItoRenz00
+    Place in: StarterPlayer > StarterPlayerScripts > AdvancedSettings > Tabs > AudioTab
+    Type: ModuleScript
+    ═══════════════════════════════════════════════
+]]
+
+local SoundService = game:GetService("SoundService")
+local RunService = game:GetService("RunService")
+local Players = game:GetService("Players")
+local TweenService = game:GetService("TweenService")
+local Workspace = game:GetService("Workspace")
+local UserInputService = game:GetService("UserInputService")
+
+local LocalPlayer = Players.LocalPlayer
+local AudioTab = {}
+
+-- ═══════════════════════════════════════════════
+-- AUDIO STATE
+-- ═══════════════════════════════════════════════
+
+local AudioManager = {
+    masterVolume = 10,
+    musicVolume = 5,
+    sfxVolume = 10,
+    uiVolume = 8,
+    
+    trackedSFX = {},
+    trackedUI = {},
+    originalVolumes = {},
+    soundConnections = {},
+    
+    soundAddedConnection = nil,
+    heartbeatConnection = nil,
+    
+    ui = {
+        masterSlider = nil,
+        masterValueLabel = nil,
+        musicSlider = nil,
+        musicValueLabel = nil,
+        sfxSlider = nil,
+        sfxValueLabel = nil,
+        uiSlider = nil,
+        uiValueLabel = nil,
+        sfxCountLabel = nil,
+        uiCountLabel = nil
+    },
+    
+    initialized = false
+}
+
+-- ═══════════════════════════════════════════════
+-- SOUND CATEGORIZATION
+-- ═══════════════════════════════════════════════
+
+function AudioManager:isMusicSound(sound)
+    if sound.Name == "MusicPlayerSound" then
+        return true
+    end
+    
+    if sound.Parent == SoundService and sound.TimeLength > 60 then
+        return true
+    end
+    
+    return false
+end
+
+function AudioManager:isUISound(sound)
+    local name = sound.Name:lower()
+    local uiPatterns = {
+        "ui", "button", "click", "menu", "notification",
+        "alert", "popup", "hover", "select", "confirm",
+        "cancel", "toggle", "switch", "tab", "dialog",
+        "window", "panel", "tooltip", "beep", "chime",
+        "ding", "ping", "blip", "boop"
+    }
+    
+    for _, pattern in ipairs(uiPatterns) do
+        if name:find(pattern) then
+            return true
+        end
+    end
+    
+    local parent = sound.Parent
+    if parent then
+        if parent:IsA("GuiObject") or 
+           parent:IsA("ScreenGui") or 
+           parent:IsA("PlayerGui") or
+           parent.Name:lower():find("gui") or
+           parent.Name:lower():find("ui") then
+            return true
+        end
+    end
+    
+    if sound:IsDescendantOf(LocalPlayer:WaitForChild("PlayerGui")) then
+        return true
+    end
+    
+    return false
+end
+
+function AudioManager:isPlayerSound(sound)
+    if sound.Name == "CustomJump" or sound.Name == "CustomFootstep" then
+        return true
+    end
+    
+    local character = LocalPlayer.Character
+    if character and sound:IsDescendantOf(character) then
+        return true
+    end
+    
+    return false
+end
+
+function AudioManager:categorizeSoundAsSFX(sound)
+    if self:isMusicSound(sound) then
+        return false
+    end
+    
+    if self:isUISound(sound) then
+        return false
+    end
+    
+    return true
+end
+
+-- ═══════════════════════════════════════════════
+-- SOUND TRACKING
+-- ═══════════════════════════════════════════════
+
+function AudioManager:trackSound(sound)
+    if not sound:IsA("Sound") then return end
+    if self:isMusicSound(sound) then return end
+    
+    local isUI = self:isUISound(sound)
+    
+    if self.trackedSFX[sound] or self.trackedUI[sound] then return end
+    
+    self.originalVolumes[sound] = sound.Volume
+    
+    if isUI then
+        self.trackedUI[sound] = true
+    else
+        self.trackedSFX[sound] = true
+    end
+    
+    self:applyVolumeToSound(sound)
+    
+    local conn = sound:GetPropertyChangedSignal("Volume"):Connect(function()
+        if not (self.trackedSFX[sound] or self.trackedUI[sound]) then return end
+        
+        local currentMultiplier
+        if self.trackedUI[sound] then
+            currentMultiplier = (self.masterVolume / 10) * (self.uiVolume / 10)
+        else
+            currentMultiplier = (self.masterVolume / 10) * (self.sfxVolume / 10)
+        end
+        
+        if currentMultiplier > 0 then
+            self.originalVolumes[sound] = sound.Volume / currentMultiplier
+        end
+    end)
+    
+    self.soundConnections[sound] = conn
+    
+    sound.Destroying:Connect(function()
+        self:untrackSound(sound)
+    end)
+end
+
+function AudioManager:untrackSound(sound)
+    if self.soundConnections[sound] then
+        self.soundConnections[sound]:Disconnect()
+        self.soundConnections[sound] = nil
+    end
+    
+    self.trackedSFX[sound] = nil
+    self.trackedUI[sound] = nil
+    self.originalVolumes[sound] = nil
+end
+
+function AudioManager:applyVolumeToSound(sound)
+    if not self.originalVolumes[sound] then return end
+    
+    local originalVol = self.originalVolumes[sound]
+    local finalVolume
+    
+    if self.trackedUI[sound] then
+        finalVolume = originalVol * (self.masterVolume / 10) * (self.uiVolume / 10)
+    elseif self.trackedSFX[sound] then
+        finalVolume = originalVol * (self.masterVolume / 10) * (self.sfxVolume / 10)
+    else
+        return
+    end
+    
+    sound.Volume = finalVolume
+end
+
+function AudioManager:scanExistingSounds()
+    for _, descendant in ipairs(Workspace:GetDescendants()) do
+        if descendant:IsA("Sound") then
+            self:trackSound(descendant)
+        end
+    end
+    
+    for _, sound in ipairs(SoundService:GetDescendants()) do
+        if sound:IsA("Sound") then
+            self:trackSound(sound)
+        end
+    end
+    
+    for _, player in ipairs(Players:GetPlayers()) do
+        if player.Character then
+            for _, descendant in ipairs(player.Character:GetDescendants()) do
+                if descendant:IsA("Sound") then
+                    self:trackSound(descendant)
+                end
+            end
+        end
+        
+        if player:FindFirstChild("PlayerGui") then
+            for _, descendant in ipairs(player.PlayerGui:GetDescendants()) do
+                if descendant:IsA("Sound") then
+                    self:trackSound(descendant)
+                end
+            end
+        end
+    end
+    
+    local ReplicatedStorage = game:GetService("ReplicatedStorage")
+    for _, descendant in ipairs(ReplicatedStorage:GetDescendants()) do
+        if descendant:IsA("Sound") then
+            self:trackSound(descendant)
+        end
+    end
+    
+    local StarterGui = game:GetService("StarterGui")
+    for _, descendant in ipairs(StarterGui:GetDescendants()) do
+        if descendant:IsA("Sound") then
+            self:trackSound(descendant)
+        end
+    end
+end
+
+function AudioManager:setupSoundMonitoring()
+    Workspace.DescendantAdded:Connect(function(descendant)
+        if descendant:IsA("Sound") then
+            task.wait(0.1)
+            self:trackSound(descendant)
+            self:updateSoundCounts()
+        end
+    end)
+    
+    Workspace.DescendantRemoving:Connect(function(descendant)
+        if descendant:IsA("Sound") then
+            self:untrackSound(descendant)
+            self:updateSoundCounts()
+        end
+    end)
+    
+    SoundService.DescendantAdded:Connect(function(descendant)
+        if descendant:IsA("Sound") then
+            task.wait(0.1)
+            self:trackSound(descendant)
+            self:updateSoundCounts()
+        end
+    end)
+    
+    local playerGui = LocalPlayer:WaitForChild("PlayerGui")
+    playerGui.DescendantAdded:Connect(function(descendant)
+        if descendant:IsA("Sound") then
+            task.wait(0.1)
+            self:trackSound(descendant)
+            self:updateSoundCounts()
+        end
+    end)
+    
+    for _, player in ipairs(Players:GetPlayers()) do
+        if player.Character then
+            self:monitorCharacter(player.Character)
+        end
+        
+        player.CharacterAdded:Connect(function(character)
+            self:monitorCharacter(character)
+        end)
+    end
+    
+    Players.PlayerAdded:Connect(function(player)
+        player.CharacterAdded:Connect(function(character)
+            self:monitorCharacter(character)
+        end)
+    end)
+end
+
+function AudioManager:monitorCharacter(character)
+    character.DescendantAdded:Connect(function(descendant)
+        if descendant:IsA("Sound") then
+            task.wait(0.1)
+            self:trackSound(descendant)
+            self:updateSoundCounts()
+        end
+    end)
+end
+
+-- ═══════════════════════════════════════════════
+-- VOLUME FUNCTIONS
+-- ═══════════════════════════════════════════════
+
+function AudioManager:setMasterVolume(value)
+    self.masterVolume = math.clamp(value, 0, 10)
+    
+    self:updateMusicVolume()
+    self:updateAllSFXVolumes()
+    self:updateAllUIVolumes()
+    
+    if self.ui.masterValueLabel then
+        self.ui.masterValueLabel.Text = tostring(self.masterVolume)
+    end
+end
+
+function AudioManager:setMusicVolume(value)
+    self.musicVolume = math.clamp(value, 0, 10)
+    self:updateMusicVolume()
+    
+    if self.ui.musicValueLabel then
+        self.ui.musicValueLabel.Text = tostring(self.musicVolume)
+    end
+end
+
+function AudioManager:setSFXVolume(value)
+    self.sfxVolume = math.clamp(value, 0, 10)
+    self:updateAllSFXVolumes()
+    
+    if self.ui.sfxValueLabel then
+        self.ui.sfxValueLabel.Text = tostring(self.sfxVolume)
+    end
+end
+
+function AudioManager:setUIVolume(value)
+    self.uiVolume = math.clamp(value, 0, 10)
+    self:updateAllUIVolumes()
+    
+    if self.ui.uiValueLabel then
+        self.ui.uiValueLabel.Text = tostring(self.uiVolume)
+    end
+end
+
+function AudioManager:updateMusicVolume()
+    if _G.AdvancedSettings and _G.AdvancedSettings.MusicPlayer then
+        local musicPlayer = _G.AdvancedSettings.MusicPlayer
+        if musicPlayer.sound then
+            local finalVolume = (self.masterVolume / 10) * (self.musicVolume / 10) * 2.5
+            musicPlayer.sound.Volume = finalVolume
+        end
+        if musicPlayer.state then
+            musicPlayer.state.volume = self.musicVolume
+        end
+    end
+end
+
+function AudioManager:updateAllSFXVolumes()
+    for sound, _ in pairs(self.trackedSFX) do
+        if sound and sound.Parent then
+            self:applyVolumeToSound(sound)
+        else
+            self:untrackSound(sound)
+        end
+    end
+    
+    self:updateCharacterSounds()
+end
+
+function AudioManager:updateAllUIVolumes()
+    for sound, _ in pairs(self.trackedUI) do
+        if sound and sound.Parent then
+            self:applyVolumeToSound(sound)
+        else
+            self:untrackSound(sound)
+        end
+    end
+end
+
+function AudioManager:updateCharacterSounds()
+    local character = LocalPlayer.Character
+    if not character then return end
+    
+    local rootPart = character:FindFirstChild("HumanoidRootPart")
+    if not rootPart then return end
+    
+    local finalVolume = (self.masterVolume / 10) * (self.sfxVolume / 10)
+    
+    local jumpSound = rootPart:FindFirstChild("CustomJump")
+    if jumpSound and jumpSound:IsA("Sound") then
+        jumpSound.Volume = finalVolume
+    end
+    
+    local walkSound = rootPart:FindFirstChild("CustomFootstep")
+    if walkSound and walkSound:IsA("Sound") then
+        walkSound.Volume = finalVolume
+    end
+end
+
+function AudioManager:updateSoundCounts()
+    local sfxCount = 0
+    for _, _ in pairs(self.trackedSFX) do
+        sfxCount = sfxCount + 1
+    end
+    
+    local uiCount = 0
+    for _, _ in pairs(self.trackedUI) do
+        uiCount = uiCount + 1
+    end
+    
+    if self.ui.sfxCountLabel then
+        self.ui.sfxCountLabel.Text = "🎮 " .. sfxCount .. " SFX"
+    end
+    
+    if self.ui.uiCountLabel then
+        self.ui.uiCountLabel.Text = "🖱️ " .. uiCount .. " UI"
+    end
+end
+
+-- ═══════════════════════════════════════════════
+-- INITIALIZATION
+-- ═══════════════════════════════════════════════
+
+function AudioManager:init()
+    if self.initialized then return end
+    
+    self:setMasterVolume(self.masterVolume)
+    self:setMusicVolume(self.musicVolume)
+    self:setSFXVolume(self.sfxVolume)
+    self:setUIVolume(self.uiVolume)
+    
+    self:scanExistingSounds()
+    self:setupSoundMonitoring()
+    
+    LocalPlayer.CharacterAdded:Connect(function()
+        task.wait(1)
+        self:updateCharacterSounds()
+        self:scanExistingSounds()
+    end)
+    
+    self.heartbeatConnection = RunService.Heartbeat:Connect(function()
+        if tick() % 3 < 0.1 then
+            self:updateSoundCounts()
+        end
+    end)
+    
+    self.initialized = true
+    print("🔊 Audio Manager v4.9.4 initialized (Clean & Minimal Scale Labels! ✨)")
+    
+    task.wait(1)
+    self:updateSoundCounts()
+end
+
+function AudioManager:cleanup()
+    for sound, conn in pairs(self.soundConnections) do
+        if conn then
+            conn:Disconnect()
+        end
+    end
+    
+    if self.heartbeatConnection then
+        self.heartbeatConnection:Disconnect()
+        self.heartbeatConnection = nil
+    end
+    
+    self.trackedSFX = {}
+    self.trackedUI = {}
+    self.originalVolumes = {}
+    self.soundConnections = {}
+    
+    self.initialized = false
+end
+
+-- ═══════════════════════════════════════════════
+-- SLIDER CREATION - ULTRA SMOOTH ZERO JITTER
+-- ═══════════════════════════════════════════════
+
+local function createVolumeSlider(parent, title, yPos, currentValue, callback, colors, isMobile, utils)
+    local sliderFrame = Instance.new("Frame")
+    sliderFrame.Name = title .. "Slider"
+    sliderFrame.Size = UDim2.new(1, -4, 0, isMobile and 75 or 85)
+    sliderFrame.BackgroundColor3 = colors.card
+    sliderFrame.BackgroundTransparency = 0.5
+    sliderFrame.BorderSizePixel = 0
+    sliderFrame.ZIndex = 202
+    sliderFrame.LayoutOrder = yPos
+    sliderFrame.Parent = parent
+    utils.corner(sliderFrame, 10)
+    
+    local stroke = Instance.new("UIStroke")
+    stroke.Color = colors.divider
+    stroke.Thickness = 1
+    stroke.Transparency = 0.6
+    stroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
+    stroke.Parent = sliderFrame
+    
+    -- TITLE LABEL
+    local titleLabel = Instance.new("TextLabel")
+    titleLabel.Size = UDim2.new(1, -20, 0, isMobile and 16 or 20)
+    titleLabel.Position = UDim2.new(0, 10, 0, isMobile and 5 or 6)
+    titleLabel.BackgroundTransparency = 1
+    titleLabel.Text = title
+    titleLabel.TextColor3 = colors.text
+    titleLabel.Font = Enum.Font.GothamBold
+    titleLabel.TextSize = isMobile and 11 or 13
+    titleLabel.TextXAlignment = Enum.TextXAlignment.Left
+    titleLabel.ZIndex = 203
+    titleLabel.Parent = sliderFrame
+    
+    -- VALUE LABEL
+    local valueLabel = Instance.new("TextLabel")
+    valueLabel.Size = UDim2.new(0, isMobile and 36 or 42, 0, isMobile and 16 or 20)
+    valueLabel.Position = UDim2.new(1, isMobile and -46 or -52, 0, isMobile and 5 or 6)
+    valueLabel.BackgroundColor3 = colors.accent
+    valueLabel.BackgroundTransparency = 0.3
+    valueLabel.BorderSizePixel = 0
+    valueLabel.Text = tostring(currentValue)
+    valueLabel.TextColor3 = colors.bg
+    valueLabel.Font = Enum.Font.GothamBold
+    valueLabel.TextSize = isMobile and 10 or 13
+    valueLabel.ZIndex = 203
+    valueLabel.Parent = sliderFrame
+    utils.corner(valueLabel, 4)
+    
+    -- SLIDER CONTAINER
+    local sliderContainer = Instance.new("Frame")
+    sliderContainer.Size = UDim2.new(1, -20, 0, isMobile and 32 or 36)
+    sliderContainer.Position = UDim2.new(0, 10, 0, isMobile and 26 or 32)
+    sliderContainer.BackgroundTransparency = 1
+    sliderContainer.ZIndex = 203
+    sliderContainer.Parent = sliderFrame
+    
+    -- MUTE BUTTON
+    local btnMute = Instance.new("TextButton")
+    btnMute.Size = UDim2.new(0, isMobile and 32 or 36, 0, isMobile and 32 or 36)
+    btnMute.Position = UDim2.new(0, 0, 0, 0)
+    btnMute.BackgroundColor3 = Color3.fromRGB(40, 40, 45)
+    btnMute.BackgroundTransparency = 0.1
+    btnMute.BorderSizePixel = 0
+    btnMute.Text = ""
+    btnMute.AutoButtonColor = false
+    btnMute.ZIndex = 205
+    btnMute.Parent = sliderContainer
+    utils.corner(btnMute, 8)
+    
+    local btnMuteStroke = Instance.new("UIStroke")
+    btnMuteStroke.Color = colors.bad
+    btnMuteStroke.Thickness = 2
+    btnMuteStroke.Transparency = 0.3
+    btnMuteStroke.Parent = btnMute
+    
+    local muteIcon = Instance.new("TextLabel")
+    muteIcon.Size = UDim2.new(1, 0, 1, 0)
+    muteIcon.BackgroundTransparency = 1
+    muteIcon.Text = "🔇"
+    muteIcon.TextColor3 = colors.bad
+    muteIcon.Font = Enum.Font.GothamBold
+    muteIcon.TextSize = isMobile and 16 or 18
+    muteIcon.ZIndex = 206
+    muteIcon.Parent = btnMute
+    
+    -- MAX BUTTON
+    local btnMax = Instance.new("TextButton")
+    btnMax.Size = UDim2.new(0, isMobile and 32 or 36, 0, isMobile and 32 or 36)
+    btnMax.Position = UDim2.new(1, isMobile and -32 or -36, 0, 0)
+    btnMax.BackgroundColor3 = Color3.fromRGB(40, 45, 40)
+    btnMax.BackgroundTransparency = 0.1
+    btnMax.BorderSizePixel = 0
+    btnMax.Text = ""
+    btnMax.AutoButtonColor = false
+    btnMax.ZIndex = 205
+    btnMax.Parent = sliderContainer
+    utils.corner(btnMax, 8)
+    
+    local btnMaxStroke = Instance.new("UIStroke")
+    btnMaxStroke.Color = colors.good
+    btnMaxStroke.Thickness = 2
+    btnMaxStroke.Transparency = 0.3
+    btnMaxStroke.Parent = btnMax
+    
+    local maxIcon = Instance.new("TextLabel")
+    maxIcon.Size = UDim2.new(1, 0, 1, 0)
+    maxIcon.BackgroundTransparency = 1
+    maxIcon.Text = "🔊"
+    maxIcon.TextColor3 = colors.good
+    maxIcon.Font = Enum.Font.GothamBold
+    maxIcon.TextSize = isMobile and 16 or 18
+    maxIcon.ZIndex = 206
+    maxIcon.Parent = btnMax
+    
+    -- SLIDER BAR
+local leftGap = isMobile and 48 or 55
+local rightGap = isMobile and -15 or -8
+    
+    local sliderBg = Instance.new("TextButton")
+    sliderBg.Size = UDim2.new(1, -(leftGap + 32 + rightGap + 32), 0, isMobile and 12 or 12)
+    sliderBg.Position = UDim2.new(0, leftGap, 0.5, isMobile and -6 or -6)
+    sliderBg.BackgroundColor3 = colors.toggleOff
+    sliderBg.BorderSizePixel = 0
+    sliderBg.Text = ""
+    sliderBg.AutoButtonColor = false
+    sliderBg.ZIndex = 203
+    sliderBg.Active = true
+    sliderBg.Parent = sliderContainer
+    utils.corner(sliderBg, 6)
+    
+    local sliderFill = Instance.new("Frame")
+    sliderFill.Size = UDim2.new(currentValue / 10, 0, 1, 0)
+    sliderFill.BackgroundColor3 = colors.accent
+    sliderFill.BorderSizePixel = 0
+    sliderFill.ZIndex = 204
+    sliderFill.Parent = sliderBg
+    utils.corner(sliderFill, 5)
+    
+    -- KNOB
+    local knobSize = isMobile and 14 or 22
+    local knobOffset = knobSize / -2
+    
+    local sliderKnob = Instance.new("Frame")
+    sliderKnob.Size = UDim2.new(0, knobSize, 0, knobSize)
+    sliderKnob.Position = UDim2.new(currentValue / 10, knobOffset, 0.5, knobOffset)
+    sliderKnob.BackgroundColor3 = colors.text
+    sliderKnob.BorderSizePixel = 0
+    sliderKnob.ZIndex = 210
+    sliderKnob.Parent = sliderBg
+    utils.corner(sliderKnob, knobSize / 2)
+    
+    local knobStroke = Instance.new("UIStroke")
+    knobStroke.Color = colors.accent
+    knobStroke.Thickness = isMobile and 2 or 3
+    knobStroke.Parent = sliderKnob
+    
+    -- INVISIBLE HITBOX
+    local hitboxSize = isMobile and 52 or 80
+    local knobHitbox = Instance.new("TextButton")
+    knobHitbox.Size = UDim2.new(0, hitboxSize, 0, hitboxSize)
+    knobHitbox.Position = UDim2.new(0.5, -hitboxSize/2, 0.5, -hitboxSize/2)
+    knobHitbox.BackgroundTransparency = 1
+    knobHitbox.Text = ""
+    knobHitbox.AutoButtonColor = false
+    knobHitbox.ZIndex = 211
+    knobHitbox.Active = true
+    knobHitbox.Parent = sliderKnob
+    
+    -- SCALE LABELS CONTAINER
+    local scaleContainer = Instance.new("Frame")
+    scaleContainer.Size = UDim2.new(1, -(leftGap + 32 + rightGap + 32), 0, isMobile and 14 or 16)
+    scaleContainer.Position = UDim2.new(0, leftGap, 1, isMobile and -16 or -18)
+    scaleContainer.BackgroundTransparency = 1
+    scaleContainer.ZIndex = 203
+    scaleContainer.Parent = sliderFrame
+    
+    -- ★★★ PERFECT: Clean & minimal scale label positioning ★★★
+    local function createScaleLabel(text, xScale, isNumber)
+        local label = Instance.new("TextLabel")
+        local labelWidth = isNumber and (isMobile and 16 or 20) or (isMobile and 10 or 12)
+        label.Size = UDim2.new(0, labelWidth, 1, 0)
+        
+        local xOffset
+        if xScale == 0 then
+            -- Label "0" - FLUSH LEFT + 6px shift kanan
+            xOffset = 6
+            label.TextXAlignment = Enum.TextXAlignment.Left
+        elseif xScale == 1 then
+            -- Label "10" - FLUSH RIGHT + 5px shift kiri
+            xOffset = -labelWidth - 5
+            label.TextXAlignment = Enum.TextXAlignment.Right
+        else
+            -- Center labels (hanya "5")
+            xOffset = -(labelWidth / 2)
+            label.TextXAlignment = Enum.TextXAlignment.Center
+        end
+        
+        label.Position = UDim2.new(xScale, xOffset, 0, 0)
+        label.BackgroundTransparency = 1
+        label.Text = text
+        label.TextColor3 = isNumber and colors.textGray or Color3.fromRGB(100, 100, 100)
+        label.Font = Enum.Font.Gotham
+        label.TextSize = isNumber and (isMobile and 8 or 10) or (isMobile and 10 or 11)
+        label.ZIndex = 204
+        label.Parent = scaleContainer
+        return label
+    end
+    
+    -- Hanya tampilkan angka 0, 5, dan 10 (hapus dots)
+    createScaleLabel("0", 0, true)
+    createScaleLabel("5", 0.5, true)
+    createScaleLabel("10", 1, true)
+    
+    -- ★★★ ULTRA SMOOTH DRAG - FLOATING POINT DURING DRAG ★★★
+    local dragging = false
+    local smoothValue = currentValue  -- Floating point untuk smooth visual
+    local committedValue = currentValue  -- Integer untuk callback
+    
+    -- UPDATE UI DENGAN SMOOTH FLOAT
+    local function updateSliderUI(floatValue, updateLabel)
+        local relativePos = floatValue / 10
+        
+        -- Direct update tanpa tween = zero jitter
+        sliderFill.Size = UDim2.new(relativePos, 0, 1, 0)
+        sliderKnob.Position = UDim2.new(relativePos, knobOffset, 0.5, knobOffset)
+        
+        if updateLabel then
+            valueLabel.Text = tostring(math.floor(floatValue + 0.5))
+        end
+    end
+    
+    -- CALCULATE SMOOTH FLOAT VALUE
+    local function calculateSmoothValue(inputPos)
+        local relativePos = (inputPos.X - sliderBg.AbsolutePosition.X) / sliderBg.AbsoluteSize.X
+        relativePos = math.clamp(relativePos, 0, 1)
+        return relativePos * 10  -- Return float 0.0 - 10.0
+    end
+    
+    -- UPDATE DARI INPUT - SMOOTH TRACKING
+    local function updateSliderFromInput(input)
+        if not dragging then return end
+        
+        -- Calculate smooth floating point value
+        smoothValue = calculateSmoothValue(input.Position)
+        
+        -- Update UI dengan smooth value
+        updateSliderUI(smoothValue, true)
+        
+        -- Calculate integer value untuk callback
+        local intValue = math.floor(smoothValue + 0.5)
+        
+        -- Only callback when integer value changes
+        if intValue ~= committedValue then
+            committedValue = intValue
+            if callback then
+                callback(intValue)
+            end
+        end
+    end
+    
+    -- START DRAGGING
+    local function startDragging(input)
+        dragging = true
+        smoothValue = calculateSmoothValue(input.Position)
+        updateSliderUI(smoothValue, true)
+        
+        local intValue = math.floor(smoothValue + 0.5)
+        committedValue = intValue
+        if callback then
+            callback(intValue)
+        end
+    end
+    
+    -- STOP DRAGGING - SNAP TO NEAREST INTEGER
+    local function stopDragging()
+        if not dragging then return end
+        dragging = false
+        
+        -- Snap to final integer value
+        local finalValue = math.floor(smoothValue + 0.5)
+        smoothValue = finalValue
+        updateSliderUI(finalValue, true)
+        
+        if finalValue ~= committedValue then
+            committedValue = finalValue
+            if callback then
+                callback(finalValue)
+            end
+        end
+    end
+    
+    -- ★★★ INPUT TRACKING - PRIORITAS RenderStepped UNTUK PC ★★★
+    local renderConnection
+    local inputConnection
+    
+    if not isMobile then
+        -- PC: RenderStepped untuk smooth 60fps tracking
+        renderConnection = RunService.RenderStepped:Connect(function()
+            if dragging then
+                local mousePos = UserInputService:GetMouseLocation()
+                local fakeInput = {
+                    Position = Vector3.new(mousePos.X, mousePos.Y, 0)
+                }
+                updateSliderFromInput(fakeInput)
+            end
+        end)
+    else
+        -- Mobile: InputChanged untuk touch
+        inputConnection = UserInputService.InputChanged:Connect(function(input)
+            if dragging and input.UserInputType == Enum.UserInputType.Touch then
+                updateSliderFromInput(input)
+            end
+        end)
+    end
+    
+    -- INPUT BEGAN HANDLERS
+    knobHitbox.InputBegan:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1 or 
+           input.UserInputType == Enum.UserInputType.Touch then
+            startDragging(input)
+        end
+    end)
+    
+    sliderBg.InputBegan:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1 or 
+           input.UserInputType == Enum.UserInputType.Touch then
+            startDragging(input)
+        end
+    end)
+    
+    -- MOUSE BUTTON HANDLERS (PC)
+    knobHitbox.MouseButton1Down:Connect(function(x, y)
+        local mouseInput = {
+            Position = Vector3.new(x, y, 0)
+        }
+        startDragging(mouseInput)
+    end)
+    
+    sliderBg.MouseButton1Down:Connect(function(x, y)
+        local mouseInput = {
+            Position = Vector3.new(x, y, 0)
+        }
+        startDragging(mouseInput)
+    end)
+    
+    -- INPUT ENDED - UNIVERSAL STOP
+    UserInputService.InputEnded:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1 or 
+           input.UserInputType == Enum.UserInputType.Touch then
+            stopDragging()
+        end
+    end)
+    
+    -- BUTTON FUNCTIONALITY
+    btnMute.MouseButton1Click:Connect(function()
+        smoothValue = 0
+        committedValue = 0
+        updateSliderUI(0, true)
+        if callback then
+            callback(0)
+        end
+    end)
+    
+    btnMax.MouseButton1Click:Connect(function()
+        smoothValue = 10
+        committedValue = 10
+        updateSliderUI(10, true)
+        if callback then
+            callback(10)
+        end
+    end)
+    
+    -- CLEANUP
+    sliderFrame.Destroying:Connect(function()
+        if renderConnection then
+            renderConnection:Disconnect()
+        end
+        if inputConnection then
+            inputConnection:Disconnect()
+        end
+    end)
+    
+    return sliderFrame, valueLabel
+end
+
+-- ═══════════════════════════════════════════════
+-- CREATE UI CONTENT
+-- ═══════════════════════════════════════════════
+
+function AudioTab.createContent(contentScroll, colors, isMobile, utils)
+    AudioManager:init()
+    
+    local infoFrame = Instance.new("Frame")
+    infoFrame.Name = "InfoFrame"
+    infoFrame.Size = UDim2.new(1, -4, 0, isMobile and 75 or 95)
+    infoFrame.BackgroundColor3 = colors.card
+    infoFrame.BackgroundTransparency = 0.3
+    infoFrame.BorderSizePixel = 0
+    infoFrame.ZIndex = 202
+    infoFrame.LayoutOrder = 0
+    infoFrame.Parent = contentScroll
+    utils.corner(infoFrame, 12)
+    
+    local infoStroke = Instance.new("UIStroke")
+    infoStroke.Color = colors.accent
+    infoStroke.Thickness = 2
+    infoStroke.Transparency = 0.5
+    infoStroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
+    infoStroke.Parent = infoFrame
+    
+    local infoTitle = Instance.new("TextLabel")
+    infoTitle.Size = UDim2.new(1, -20, 0, isMobile and 16 or 24)
+    infoTitle.Position = UDim2.new(0, 10, 0, isMobile and 5 or 8)
+    infoTitle.BackgroundTransparency = 1
+    infoTitle.Text = "🔊 AUDIO CONTROLS"
+    infoTitle.TextColor3 = colors.accent
+    infoTitle.Font = Enum.Font.GothamBold
+    infoTitle.TextSize = isMobile and 12 or 16
+    infoTitle.TextXAlignment = Enum.TextXAlignment.Left
+    infoTitle.ZIndex = 203
+    infoTitle.Parent = infoFrame
+    
+    local infoDesc = Instance.new("TextLabel")
+    infoDesc.Size = UDim2.new(1, -20, 0, isMobile and 30 or 48)
+    infoDesc.Position = UDim2.new(0, 10, 0, isMobile and 23 or 34)
+    infoDesc.BackgroundTransparency = 1
+    infoDesc.Text = "Professional audio control with Master, Music, Game SFX, and UI Sounds."
+    infoDesc.TextColor3 = colors.textGray
+    infoDesc.Font = Enum.Font.Gotham
+    infoDesc.TextSize = isMobile and 8 or 11
+    infoDesc.TextXAlignment = Enum.TextXAlignment.Left
+    infoDesc.TextYAlignment = Enum.TextYAlignment.Top
+    infoDesc.TextWrapped = true
+    infoDesc.ZIndex = 203
+    infoDesc.Parent = infoFrame
+    
+    local countContainer = Instance.new("Frame")
+    countContainer.Size = UDim2.new(1, -20, 0, isMobile and 13 or 18)
+    countContainer.Position = UDim2.new(0, 10, 1, isMobile and -15 or -22)
+    countContainer.BackgroundTransparency = 1
+    countContainer.ZIndex = 203
+    countContainer.Parent = infoFrame
+    
+    local sfxCountLabel = Instance.new("TextLabel")
+    sfxCountLabel.Size = UDim2.new(0.5, -5, 1, 0)
+    sfxCountLabel.Position = UDim2.new(0, 0, 0, 0)
+    sfxCountLabel.BackgroundTransparency = 1
+    sfxCountLabel.Text = "🎮 0 SFX"
+    sfxCountLabel.TextColor3 = colors.accent
+    sfxCountLabel.Font = Enum.Font.GothamBold
+    sfxCountLabel.TextSize = isMobile and 8 or 10
+    sfxCountLabel.TextXAlignment = Enum.TextXAlignment.Left
+    sfxCountLabel.ZIndex = 204
+    sfxCountLabel.Parent = countContainer
+    AudioManager.ui.sfxCountLabel = sfxCountLabel
+    
+    local uiCountLabel = Instance.new("TextLabel")
+    uiCountLabel.Size = UDim2.new(0.5, -5, 1, 0)
+    uiCountLabel.Position = UDim2.new(0.5, 5, 0, 0)
+    uiCountLabel.BackgroundTransparency = 1
+    uiCountLabel.Text = "🖱️ 0 UI"
+    uiCountLabel.TextColor3 = colors.good
+    uiCountLabel.Font = Enum.Font.GothamBold
+    uiCountLabel.TextSize = isMobile and 8 or 10
+    uiCountLabel.TextXAlignment = Enum.TextXAlignment.Left
+    uiCountLabel.ZIndex = 204
+    uiCountLabel.Parent = countContainer
+    AudioManager.ui.uiCountLabel = uiCountLabel
+    
+    local masterSlider, masterValueLabel = createVolumeSlider(
+        contentScroll, "🔊 Master Volume", 1, AudioManager.masterVolume,
+        function(value) AudioManager:setMasterVolume(value) end,
+        colors, isMobile, utils
+    )
+    AudioManager.ui.masterSlider = masterSlider
+    AudioManager.ui.masterValueLabel = masterValueLabel
+    
+    local musicSlider, musicValueLabel = createVolumeSlider(
+        contentScroll, "🎵 Music Volume", 2, AudioManager.musicVolume,
+        function(value) AudioManager:setMusicVolume(value) end,
+        colors, isMobile, utils
+    )
+    AudioManager.ui.musicSlider = musicSlider
+    AudioManager.ui.musicValueLabel = musicValueLabel
+    
+    local sfxSlider, sfxValueLabel = createVolumeSlider(
+        contentScroll, "🎮 SFX Volume (Game Sounds)", 3, AudioManager.sfxVolume,
+        function(value) AudioManager:setSFXVolume(value) end,
+        colors, isMobile, utils
+    )
+    AudioManager.ui.sfxSlider = sfxSlider
+    AudioManager.ui.sfxValueLabel = sfxValueLabel
+    
+    local uiSlider, uiValueLabel = createVolumeSlider(
+        contentScroll, "🖱️ UI Volume (Buttons & Menus)", 4, AudioManager.uiVolume,
+        function(value) AudioManager:setUIVolume(value) end,
+        colors, isMobile, utils
+    )
+    AudioManager.ui.uiSlider = uiSlider
+    AudioManager.ui.uiValueLabel = uiValueLabel
+    
+    if _G.AdvancedSettings then
+        _G.AdvancedSettings.AudioManager = AudioManager
+    end
+end
+
+-- ═══════════════════════════════════════════════
+-- TAB INTERFACE
+-- ═══════════════════════════════════════════════
+
+function AudioTab.setup()
+    task.spawn(function()
+        task.wait(0.5)
+        AudioManager:init()
+    end)
+    print("✅ Audio Tab: Setup complete")
+end
+
+function AudioTab.cleanup()
+    AudioManager:cleanup()
+    print("🧹 Audio Tab: Cleanup complete")
+end
+
+return AudioTab
