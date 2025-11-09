@@ -1,0 +1,118 @@
+--[[
+    ═══════════════════════════════════════════════
+    LOAD TABS
+    ═══════════════════════════════════════════════
+    Author: ItoRenz00
+    Description: Registers all tab modules to core
+    Place in: StarterPlayer > StarterPlayerScripts > AdvancedSettings > LoadTabs
+    ═══════════════════════════════════════════════
+]]
+
+-- Wait for core to load completely
+repeat task.wait(0.1) until _G.AdvancedSettings and _G.AdvancedSettings.registerTab
+
+print("📦 Loading tabs...")
+
+-- Additional delay for safety
+task.wait(0.3)
+
+-- ═══════════════════════════════════════════════
+-- REGISTER TABS
+-- ═══════════════════════════════════════════════
+
+-- Gameplay Tab (Order: 1)
+local success1 = pcall(function()
+    local GameplayTab = require(script.Parent.Tabs.GameplayTab)
+    _G.AdvancedSettings.registerTab(
+        "GAMEPLAY",
+        "GAMEPLAY",
+        1,
+        GameplayTab.createContent,
+        GameplayTab.setup,
+        GameplayTab.cleanup
+    )
+end)
+if not success1 then warn("❌ Failed to load Gameplay Tab") end
+
+-- Music Tab (Order: 2)
+local success2 = pcall(function()
+    local MusicTab = require(script.Parent.Tabs.MusicTab)
+    _G.AdvancedSettings.registerTab(
+        "MUSIC",
+        "MUSIC",
+        2,
+        MusicTab.createContent,
+        MusicTab.setup,
+        MusicTab.cleanup
+    )
+end)
+if not success2 then warn("❌ Failed to load Music Tab") end
+
+-- SFX Tab (Order: 3)
+local success3 = pcall(function()
+    local SFXTab = require(script.Parent.Tabs.SFXTab)
+    _G.AdvancedSettings.registerTab(
+        "SFX",
+        "SFX",
+        3,
+        SFXTab.createContent,
+        SFXTab.setup,
+        SFXTab.cleanup
+    )
+end)
+if not success3 then warn("❌ Failed to load SFX Tab") end
+
+-- Audio Tab (Order: 4)
+local success4 = pcall(function()
+    local AudioTab = require(script.Parent.Tabs.AudioTab)
+    _G.AdvancedSettings.registerTab(
+        "AUDIO",
+        "AUDIO",
+        4,
+        AudioTab.createContent,
+        AudioTab.setup,
+        AudioTab.cleanup
+    )
+end)
+if not success4 then warn("❌ Failed to load Audio Tab") end
+
+-- Graphics Tab (Order: 5)
+local success5 = pcall(function()
+    local GraphicsTab = require(script.Parent.Tabs.GraphicsTab)
+    _G.AdvancedSettings.registerTab(
+        "GRAPHICS",
+        "GRAPHICS",
+        5,
+        GraphicsTab.createContent,
+        GraphicsTab.setup,
+        GraphicsTab.cleanup
+    )
+end)
+if not success5 then warn("❌ Failed to load Graphics Tab") end
+
+-- ═══════════════════════════════════════════════
+-- HOW TO ADD NEW TAB:
+-- ═══════════════════════════════════════════════
+--[[
+    1. Create new file: Tabs/YourTab.lua (as ModuleScript)
+    2. Copy template from any existing tab
+    3. Add registration here:
+    
+    local success6 = pcall(function()
+        local YourTab = require(script.Parent.Tabs.YourTab)
+        _G.AdvancedSettings.registerTab(
+            "YOUR_TAB_ID",
+            "YOUR TAB NAME",
+            6,  -- Choose order number
+            YourTab.createContent,
+            YourTab.setup,
+            YourTab.cleanup
+        )
+    end)
+    if not success6 then warn("❌ Failed to load Your Tab") end
+    
+    4. Done! Tab will appear automatically
+]]
+
+print("✅ All tabs loaded successfully!")
+print("📊 Total tabs: " .. #_G.AdvancedSettings.tabs)
