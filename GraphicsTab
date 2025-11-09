@@ -1,0 +1,594 @@
+--[[
+    ═══════════════════════════════════════════════
+    GRAPHICS TAB
+    ═══════════════════════════════════════════════
+    Author: ItoRenz00
+    Place in: StarterPlayer > StarterPlayerScripts > AdvancedSettings > Tabs > GraphicsTab
+    Type: ModuleScript
+    ═══════════════════════════════════════════════
+]]
+
+local Players = game:GetService("Players")
+local RunService = game:GetService("RunService")
+local Lighting = game:GetService("Lighting")
+local Stats = game:GetService("Stats")
+local TweenService = game:GetService("TweenService")
+
+local LocalPlayer = Players.LocalPlayer
+
+local GraphicsTab = {}
+
+-- ═══════════════════════════════════════════════
+-- PERFORMANCE MONITOR
+-- ═══════════════════════════════════════════════
+
+local Perf = {
+    fps = 60, ping = 0, mem = 0, enabled = false, lastUpdate = 0, history = {},
+    frameCount = 0, frameStartTime = tick(), fpsConnection = nil, updateConnection = nil, ui = {}
+}
+
+function Perf:countFrame()
+    self.frameCount = self.frameCount + 1
+    local currentTime = tick()
+    local elapsed = currentTime - self.frameStartTime
+    
+    if elapsed >= 0.5 then
+        if self.frameCount > 0 then
+            self.fps = math.floor(self.frameCount / elapsed)
+            self.fps = math.clamp(self.fps, 1, 240)
+            table.insert(self.history, self.fps)
+            if #self.history > 30 then table.remove(self.history, 1) end
+        end
+        self.frameCount = 0
+        self.frameStartTime = currentTime
+    end
+end
+
+function Perf:update()
+    pcall(function()
+        local pingValue = LocalPlayer:GetNetworkPing()
+        if pingValue and pingValue > 0 then
+            self.ping = math.floor(math.clamp(pingValue * 1000, 0, 9999))
+        end
+    end)
+    
+    pcall(function()
+        local memUsage = Stats:GetTotalMemoryUsageMb()
+        if memUsage and memUsage > 0 then
+            self.mem = math.floor(math.clamp(memUsage, 0, 9999))
+        end
+    end)
+    
+    self.lastUpdate = tick()
+end
+
+function Perf:getAvg()
+    if #self.history == 0 then return self.fps end
+    local sum = 0
+    for _, f in ipairs(self.history) do sum = sum + f end
+    return math.floor(sum / #self.history)
+end
+
+function Perf:getLevel(colors)
+    local avg = self:getAvg()
+    if avg >= 50 then return "Excellent", colors.good
+    elseif avg >= 30 then return "Good", colors.med
+    else return "Poor", colors.bad end
+end
+
+function Perf:start()
+    if self.fpsConnection or self.updateConnection then self:stop() end
+    self.enabled = true
+    self.frameCount = 0
+    self.frameStartTime = tick()
+    
+    self.fpsConnection = RunService.Heartbeat:Connect(function() self:countFrame() end)
+    self.updateConnection = RunService.Heartbeat:Connect(function()
+        if tick() - self.lastUpdate >= 0.5 then self:update() end
+    end)
+end
+
+function Perf:stop()
+    self.enabled = false
+    if self.fpsConnection then self.fpsConnection:Disconnect(); self.fpsConnection = nil end
+    if self.updateConnection then self.updateConnection:Disconnect(); self.updateConnection = nil end
+end
+
+function Perf:updateUI(colors)
+    if not self.ui.fps or not self.ui.fps.Parent then return end
+    
+    self.ui.fps.Text = string.format("FPS\n%d", self.fps)
+    self.ui.ping.Text = string.format("PING\n%d ms", self.ping)
+    self.ui.mem.Text = string.format("MEMORY\n%d MB", self.mem)
+    
+    local lvl, col = self:getLevel(colors)
+    self.ui.stat.Text = "Performance: " .. lvl
+    self.ui.stat.TextColor3 = col
+    
+    local avg = self:getAvg()
+    local fill = math.clamp(avg / 60, 0, 1)
+    self.ui.bar.Size = UDim2.new(fill, 0, 1, 0)
+    self.ui.bar.BackgroundColor3 = col
+end
+
+-- ═══════════════════════════════════════════════
+-- GRAPHICS SYSTEM
+-- ═══════════════════════════════════════════════
+
+local Graphics = {
+    current = "Highest",
+    conns = {},
+    
+    presets = {
+        Lowest = {
+            dist = 200, shad = false, post = false, bright = 1.3, tech = Enum.Technology.Legacy,
+            cast = false, specScale = 0, diffScale = 0.1, streamRadius = 256, meshLOD = "Performance",
+            fogEnd = 500, surfaceGuiEnabled = false, surfaceGuiDistance = 0, particleRate = 0,
+            bloomI = 0, bloomS = 0, bloomT = 0, sunRay = false, sunI = 0, sunS = 0, atmo = false, atmoD = 0
+        },
+        Low = {
+            dist = 500, shad = true, post = false, bright = 1.6, tech = Enum.Technology.Legacy,
+            cast = true, specScale = 0.05, diffScale = 0.2, streamRadius = 384, meshLOD = "Performance",
+            fogEnd = 800, surfaceGuiEnabled = true, surfaceGuiDistance = 50, particleRate = 0.3,
+            bloomI = 0, bloomS = 0, bloomT = 0, sunRay = false, sunI = 0, sunS = 0, atmo = false, atmoD = 0
+        },
+        Medium = {
+            dist = 1000, shad = true, post = true, bright = 2.0, tech = Enum.Technology.ShadowMap,
+            cast = true, specScale = 0.15, diffScale = 0.4, bloomI = 0.15, bloomS = 18, bloomT = 2.5,
+            streamRadius = 512, meshLOD = "Automatic", fogEnd = 1500, surfaceGuiEnabled = true,
+            surfaceGuiDistance = 100, particleRate = 0.6, sunRay = false, sunI = 0, sunS = 0, atmo = false, atmoD = 0
+        },
+        High = {
+            dist = 1600, shad = true, post = true, bright = 2.3, tech = Enum.Technology.Future,
+            cast = true, specScale = 0.22, diffScale = 0.55, bloomI = 0.25, bloomS = 22, bloomT = 2.0,
+            sunRay = true, sunI = 0.02, sunS = 0.5, atmo = true, atmoD = 0.2,
+            streamRadius = 768, meshLOD = "Automatic", fogEnd = 3000, surfaceGuiEnabled = true,
+            surfaceGuiDistance = 200, particleRate = 0.85
+        },
+        Highest = {
+            dist = 2200, shad = true, post = true, bright = 2.5, tech = Enum.Technology.Future,
+            cast = true, specScale = 0.3, diffScale = 0.65, bloomI = 0.35, bloomS = 26, bloomT = 1.6,
+            sunRay = true, sunI = 0.035, sunS = 0.65, atmo = true, atmoD = 0.28,
+            streamRadius = 1024, meshLOD = "Precise", fogEnd = 5000, surfaceGuiEnabled = true,
+            surfaceGuiDistance = 1000, particleRate = 1.0
+        }
+    }
+}
+
+function Graphics:apply(quality)
+    local p = self.presets[quality]
+    if not p then return false end
+    
+    self.current = quality
+    
+    -- Camera settings
+    pcall(function()
+        if LocalPlayer.Character then
+            LocalPlayer.CameraMaxZoomDistance = p.dist
+        end
+    end)
+    
+    -- Lighting settings
+    pcall(function()
+        Lighting.Technology = p.tech
+        Lighting.GlobalShadows = p.shad
+        Lighting.Brightness = p.bright
+        Lighting.EnvironmentSpecularScale = p.specScale or 0
+        Lighting.EnvironmentDiffuseScale = p.diffScale or 0
+    end)
+    
+    -- Cast shadows
+    if p.cast ~= nil then
+        task.spawn(function()
+            pcall(function()
+                for _, o in ipairs(workspace:GetDescendants()) do
+                    if o:IsA("BasePart") and o.Parent then
+                        pcall(function() o.CastShadow = p.cast end)
+                    end
+                end
+            end)
+        end)
+    end
+    
+    -- Clear existing post effects
+    pcall(function()
+        for _, e in ipairs(Lighting:GetChildren()) do
+            if e:IsA("PostEffect") or e:IsA("Atmosphere") or e:IsA("BloomEffect") or
+                e:IsA("SunRaysEffect") then
+                pcall(function() e:Destroy() end)
+            end
+        end
+    end)
+    
+    -- Apply post effects
+    if p.post then
+        pcall(function()
+            if p.bloomI and p.bloomI > 0 then
+                local b = Instance.new("BloomEffect")
+                b.Intensity = p.bloomI
+                b.Size = p.bloomS or 20
+                b.Threshold = p.bloomT or 2.0
+                b.Parent = Lighting
+            end
+            
+            if p.sunRay and p.sunI and p.sunI > 0 then
+                local s = Instance.new("SunRaysEffect")
+                s.Intensity = p.sunI
+                s.Spread = p.sunS or 0.5
+                s.Parent = Lighting
+            end
+        end)
+    end
+    
+    -- Atmosphere
+    if p.atmo and p.atmoD and p.atmoD > 0 then
+        pcall(function()
+            local a = Instance.new("Atmosphere")
+            a.Density = p.atmoD
+            a.Parent = Lighting
+        end)
+    end
+    
+    -- Streaming
+    pcall(function()
+        if p.streamRadius and workspace.StreamingEnabled then
+            workspace.StreamingTargetRadius = p.streamRadius
+        end
+    end)
+    
+    -- Mesh LOD
+    if p.meshLOD then
+        task.spawn(function()
+            pcall(function()
+                local lodEnum = Enum.RenderFidelity[p.meshLOD] or Enum.RenderFidelity.Automatic
+                for _, obj in ipairs(workspace:GetDescendants()) do
+                    if obj:IsA("MeshPart") and obj.Parent then
+                        pcall(function() obj.RenderFidelity = lodEnum end)
+                    end
+                end
+            end)
+        end)
+    end
+    
+    -- Fog
+    pcall(function()
+        if p.fogEnd then
+            Lighting.FogEnd = p.fogEnd
+            Lighting.FogStart = math.floor(p.fogEnd * 0.5)
+        end
+    end)
+    
+    -- Surface GUIs
+    if p.surfaceGuiEnabled ~= nil then
+        task.spawn(function()
+            pcall(function()
+                for _, gui in ipairs(workspace:GetDescendants()) do
+                    if gui:IsA("SurfaceGui") and gui.Parent then
+                        gui.Enabled = p.surfaceGuiEnabled
+                        if p.surfaceGuiEnabled and p.surfaceGuiDistance then
+                            gui.MaxDistance = p.surfaceGuiDistance
+                        end
+                    end
+                end
+            end)
+        end)
+    end
+    
+    -- Particles
+    if p.particleRate ~= nil then
+        task.spawn(function()
+            pcall(function()
+                for _, o in ipairs(workspace:GetDescendants()) do
+                    if (o:IsA("ParticleEmitter") or o:IsA("Smoke") or o:IsA("Fire")) and o.Parent then
+                        if p.particleRate == 0 then
+                            o.Enabled = false
+                        else
+                            o.Enabled = true
+                            if o:IsA("ParticleEmitter") then
+                                local orig = o:GetAttribute("OriginalRate") or o.Rate
+                                if orig == 0 then orig = 10 end
+                                o:SetAttribute("OriginalRate", orig)
+                                o.Rate = orig * p.particleRate
+                            end
+                        end
+                    end
+                end
+            end)
+        end)
+    end
+    
+    print("✅ Applied Graphics:", quality)
+    
+    return true
+end
+
+function Graphics:setup()
+    table.insert(self.conns, LocalPlayer.CharacterAdded:Connect(function()
+        task.wait(1)
+        self:apply(self.current)
+    end))
+end
+
+-- ═══════════════════════════════════════════════
+-- UI CREATION
+-- ═══════════════════════════════════════════════
+
+local gfxToggles = {}
+local perfUpdateLoop = nil
+
+function GraphicsTab.createContent(contentScroll, colors, isMobile, utils)
+    contentScroll.ScrollingDirection = Enum.ScrollingDirection.Y
+    contentScroll.ElasticBehavior = Enum.ElasticBehavior.Never
+    
+    local padding = Instance.new("UIPadding")
+    padding.PaddingLeft = UDim.new(0, isMobile and 8 or 12)
+    padding.PaddingRight = UDim.new(0, isMobile and 8 or 12)
+    padding.PaddingTop = UDim.new(0, isMobile and 8 or 12)
+    padding.PaddingBottom = UDim.new(0, isMobile and 16 or 20)
+    padding.Parent = contentScroll
+    
+    local listLayout = Instance.new("UIListLayout")
+    listLayout.SortOrder = Enum.SortOrder.LayoutOrder
+    listLayout.Padding = UDim.new(0, isMobile and 10 or 12)
+    listLayout.Parent = contentScroll
+    
+    -- Performance Monitor
+    local perfFrame = Instance.new("Frame")
+    perfFrame.Size = UDim2.new(1, -8, 0, isMobile and 115 or 130)
+    perfFrame.BackgroundColor3 = colors.card
+    perfFrame.BackgroundTransparency = 0.4
+    perfFrame.BorderSizePixel = 0
+    perfFrame.ZIndex = 202
+    perfFrame.LayoutOrder = 0
+    perfFrame.Parent = contentScroll
+    utils.corner(perfFrame, 12)
+    
+    local perfStroke = Instance.new("UIStroke")
+    perfStroke.Color = colors.accent
+    perfStroke.Thickness = 1.5
+    perfStroke.Transparency = 0.5
+    perfStroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
+    perfStroke.Parent = perfFrame
+    
+    local perfTitle = Instance.new("TextLabel")
+    perfTitle.Size = UDim2.new(1, -20, 0, isMobile and 20 or 24)
+    perfTitle.Position = UDim2.new(0, 10, 0, 6)
+    perfTitle.BackgroundTransparency = 1
+    perfTitle.Text = "📊 PERFORMANCE"
+    perfTitle.TextColor3 = colors.accent
+    perfTitle.Font = Enum.Font.GothamBold
+    perfTitle.TextSize = isMobile and 11 or 13
+    perfTitle.TextXAlignment = Enum.TextXAlignment.Left
+    perfTitle.ZIndex = 203
+    perfTitle.Parent = perfFrame
+    
+    local statsContainer = Instance.new("Frame")
+    statsContainer.Size = UDim2.new(1, -20, 0, isMobile and 50 or 60)
+    statsContainer.Position = UDim2.new(0, 10, 0, isMobile and 28 or 34)
+    statsContainer.BackgroundTransparency = 1
+    statsContainer.ZIndex = 203
+    statsContainer.Parent = perfFrame
+    
+    local fpsLabel = Instance.new("TextLabel")
+    fpsLabel.Size = UDim2.new(0.33, 0, 0.5, 0)
+    fpsLabel.BackgroundTransparency = 1
+    fpsLabel.Text = "FPS\n60"
+    fpsLabel.TextColor3 = colors.text
+    fpsLabel.Font = Enum.Font.GothamBold
+    fpsLabel.TextSize = isMobile and 9 or 11
+    fpsLabel.ZIndex = 204
+    fpsLabel.Parent = statsContainer
+    
+    local pingLabel = Instance.new("TextLabel")
+    pingLabel.Size = UDim2.new(0.33, 0, 0.5, 0)
+    pingLabel.Position = UDim2.new(0.33, 0, 0, 0)
+    pingLabel.BackgroundTransparency = 1
+    pingLabel.Text = "PING\n0 ms"
+    pingLabel.TextColor3 = colors.text
+    pingLabel.Font = Enum.Font.GothamBold
+    pingLabel.TextSize = isMobile and 9 or 11
+    pingLabel.ZIndex = 204
+    pingLabel.Parent = statsContainer
+    
+    local memLabel = Instance.new("TextLabel")
+    memLabel.Size = UDim2.new(0.34, 0, 0.5, 0)
+    memLabel.Position = UDim2.new(0.66, 0, 0, 0)
+    memLabel.BackgroundTransparency = 1
+    memLabel.Text = "MEMORY\n0 MB"
+    memLabel.TextColor3 = colors.text
+    memLabel.Font = Enum.Font.GothamBold
+    memLabel.TextSize = isMobile and 9 or 11
+    memLabel.ZIndex = 204
+    memLabel.Parent = statsContainer
+    
+    local statLabel = Instance.new("TextLabel")
+    statLabel.Size = UDim2.new(1, 0, 0, isMobile and 16 or 20)
+    statLabel.Position = UDim2.new(0, 0, 0, isMobile and 82 or 98)
+    statLabel.BackgroundTransparency = 1
+    statLabel.Text = "Performance: Excellent"
+    statLabel.TextColor3 = colors.good
+    statLabel.Font = Enum.Font.GothamBold
+    statLabel.TextSize = isMobile and 10 or 12
+    statLabel.ZIndex = 204
+    statLabel.Parent = perfFrame
+    
+    local barBg = Instance.new("Frame")
+    barBg.Size = UDim2.new(1, -20, 0, isMobile and 5 or 6)
+    barBg.Position = UDim2.new(0, 10, 0, isMobile and 102 or 122)
+    barBg.BackgroundColor3 = colors.toggleOff
+    barBg.BorderSizePixel = 0
+    barBg.ZIndex = 203
+    barBg.Parent = perfFrame
+    utils.corner(barBg, 4)
+    
+    local barFill = Instance.new("Frame")
+    barFill.Size = UDim2.new(0.8, 0, 1, 0)
+    barFill.BackgroundColor3 = colors.good
+    barFill.BorderSizePixel = 0
+    barFill.ZIndex = 204
+    barFill.Parent = barBg
+    utils.corner(barFill, 4)
+    
+    Perf.ui = {fps = fpsLabel, ping = pingLabel, mem = memLabel, stat = statLabel, bar = barFill}
+    Perf:start()
+    
+    if perfUpdateLoop then perfUpdateLoop:Disconnect() end
+    perfUpdateLoop = RunService.Heartbeat:Connect(function()
+        if Perf.ui.fps and Perf.ui.fps.Parent then
+            Perf:updateUI(colors)
+        else
+            if perfUpdateLoop then perfUpdateLoop:Disconnect(); perfUpdateLoop = nil end
+        end
+    end)
+    
+    -- Graphics Presets
+    local presets = {
+        {qual = "Highest", name = "Highest", desc = "Maximum quality"},
+        {qual = "High", name = "High", desc = "Enhanced visuals"},
+        {qual = "Medium", name = "Medium", desc = "Balanced quality"},
+        {qual = "Low", name = "Low", desc = "Better FPS"},
+        {qual = "Lowest", name = "Lowest", desc = "Maximum FPS"}
+    }
+    
+    for order, preset in ipairs(presets) do
+        local card = Instance.new("Frame")
+        card.Size = UDim2.new(1, -8, 0, isMobile and 45 or 50)
+        card.BackgroundColor3 = colors.card
+        card.BackgroundTransparency = 0.5
+        card.BorderSizePixel = 0
+        card.ZIndex = 202
+        card.LayoutOrder = order
+        card.Parent = contentScroll
+        utils.corner(card, 10)
+        
+        local stroke = Instance.new("UIStroke")
+        stroke.Color = colors.divider
+        stroke.Thickness = 1
+        stroke.Transparency = 0.6
+        stroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
+        stroke.Parent = card
+        
+        local textContainer = Instance.new("Frame")
+        textContainer.Size = UDim2.new(1, -80, 1, 0)
+        textContainer.Position = UDim2.new(0, isMobile and 10 or 15, 0, 0)
+        textContainer.BackgroundTransparency = 1
+        textContainer.ZIndex = 203
+        textContainer.Parent = card
+        
+        local titleLabel = Instance.new("TextLabel")
+        titleLabel.Size = UDim2.new(1, 0, 0, isMobile and 18 or 20)
+        titleLabel.Position = UDim2.new(0, 0, 0, isMobile and 6 or 8)
+        titleLabel.BackgroundTransparency = 1
+        titleLabel.Text = preset.name
+        titleLabel.TextColor3 = colors.text
+        titleLabel.Font = Enum.Font.GothamBold
+        titleLabel.TextSize = isMobile and 11 or 13
+        titleLabel.TextXAlignment = Enum.TextXAlignment.Left
+        titleLabel.ZIndex = 204
+        titleLabel.Parent = textContainer
+        
+        local descLabel = Instance.new("TextLabel")
+        descLabel.Size = UDim2.new(1, 0, 0, isMobile and 14 or 16)
+        descLabel.Position = UDim2.new(0, 0, 0, isMobile and 24 or 28)
+        descLabel.BackgroundTransparency = 1
+        descLabel.Text = preset.desc
+        descLabel.TextColor3 = colors.textDark
+        descLabel.Font = Enum.Font.Gotham
+        descLabel.TextSize = isMobile and 9 or 11
+        descLabel.TextXAlignment = Enum.TextXAlignment.Left
+        descLabel.ZIndex = 204
+        descLabel.Parent = textContainer
+        
+        local toggleBg = Instance.new("Frame")
+        toggleBg.Size = UDim2.new(0, isMobile and 36 or 38, 0, isMobile and 18 or 20)
+        toggleBg.Position = UDim2.new(1, isMobile and -42 or -50, 0.5, isMobile and -9 or -10)
+        toggleBg.BackgroundColor3 = colors.toggleOff
+        toggleBg.BorderSizePixel = 0
+        toggleBg.ZIndex = 203
+        toggleBg.Parent = card
+        utils.corner(toggleBg, 10)
+        
+        local toggleStroke = Instance.new("UIStroke")
+        toggleStroke.Color = colors.divider
+        toggleStroke.Thickness = 1
+        toggleStroke.Transparency = 0.7
+        toggleStroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
+        toggleStroke.Parent = toggleBg
+        
+        local toggleKnob = Instance.new("Frame")
+        toggleKnob.Size = UDim2.new(0, isMobile and 14 or 16, 0, isMobile and 14 or 16)
+        toggleKnob.Position = UDim2.new(0, 2, 0.5, isMobile and -7 or -8)
+        toggleKnob.BackgroundColor3 = colors.text
+        toggleKnob.BorderSizePixel = 0
+        toggleKnob.ZIndex = 204
+        toggleKnob.Parent = toggleBg
+        utils.corner(toggleKnob, 8)
+        
+        gfxToggles[preset.qual] = {bg = toggleBg, stroke = toggleStroke, knob = toggleKnob}
+        
+        if Graphics.current == preset.qual then
+            toggleBg.BackgroundColor3 = colors.toggleOn
+            toggleStroke.Color = colors.accent
+            toggleStroke.Transparency = 0
+            toggleKnob.Position = UDim2.new(1, isMobile and -16 or -18, 0.5, isMobile and -7 or -8)
+        end
+        
+        local toggleBtn = Instance.new("TextButton")
+        toggleBtn.Size = UDim2.new(1, 0, 1, 0)
+        toggleBtn.BackgroundTransparency = 1
+        toggleBtn.Text = ""
+        toggleBtn.ZIndex = 205
+        toggleBtn.Parent = toggleBg
+        
+        toggleBtn.MouseButton1Click:Connect(function()
+            for qual, t in pairs(gfxToggles) do
+                local isActive = (qual == preset.qual)
+                if isActive then
+                    utils.tween(t.bg, TweenInfo.new(0.2), {BackgroundColor3 = colors.toggleOn})
+                    utils.tween(t.stroke, TweenInfo.new(0.2), {Color = colors.accent, Transparency = 0})
+                    utils.tween(t.knob, TweenInfo.new(0.2), {
+                        Position = UDim2.new(1, isMobile and -16 or -18, 0.5, isMobile and -7 or -8)
+                    })
+                else
+                    utils.tween(t.bg, TweenInfo.new(0.2), {BackgroundColor3 = colors.toggleOff})
+                    utils.tween(t.stroke, TweenInfo.new(0.2), {Color = colors.divider, Transparency = 0.7})
+                    utils.tween(t.knob, TweenInfo.new(0.2), {
+                        Position = UDim2.new(0, 2, 0.5, isMobile and -7 or -8)
+                    })
+                end
+            end
+            
+            task.spawn(function()
+                Graphics:apply(preset.qual)
+            end)
+        end)
+        
+        card.MouseEnter:Connect(function()
+            utils.tween(card, TweenInfo.new(0.15), {BackgroundTransparency = 0.3})
+        end)
+        
+        card.MouseLeave:Connect(function()
+            utils.tween(card, TweenInfo.new(0.15), {BackgroundTransparency = 0.5})
+        end)
+    end
+end
+
+function GraphicsTab.setup()
+    Graphics:setup()
+    task.delay(2, function() Graphics:apply("Highest") end)
+    print("✅ Graphics Tab: Setup complete")
+end
+
+function GraphicsTab.cleanup()
+    for _, conn in ipairs(Graphics.conns) do
+        pcall(function() conn:Disconnect() end)
+    end
+    Graphics.conns = {}
+    
+    if perfUpdateLoop then perfUpdateLoop:Disconnect(); perfUpdateLoop = nil end
+    Perf:stop()
+    
+    print("✅ Graphics Tab cleaned up")
+end
+
+return GraphicsTab
