@@ -16,11 +16,12 @@ local Players = game:GetService("Players")
 -- ═══════════════════════════════════════════════
 
 local CONFIG = {
-    DATASTORE_NAME = "MusicPlayerData_v2",
+    DATASTORE_NAME = "MusicPlayerData_v3",
     AUTOSAVE_INTERVAL = 180,
     MAX_CUSTOM_SONGS = 100,
     MAX_PLAYLISTS = 100,
-    DEBUG_MODE = false  -- Set false untuk production
+    DEBUG_MODE = false,
+    LOG_ERRORS_ONLY = true
 }
 
 local MusicDataStore = DataStoreService:GetDataStore(CONFIG.DATASTORE_NAME)
@@ -47,6 +48,12 @@ end
 local function debug_log(prefix, message)
     if CONFIG.DEBUG_MODE then
         print("[" .. prefix .. "] " .. message)
+    end
+end
+
+local function error_log(prefix, message)
+    if CONFIG.LOG_ERRORS_ONLY or CONFIG.DEBUG_MODE then
+        warn("❌ [" .. prefix .. "] " .. message)
     end
 end
 
@@ -82,7 +89,6 @@ local function getDefaultData()
         favorites = {},
         settings = {
             volume = 5,
-            -- Loop mode dan shuffle TIDAK ada di default, client yang atur
             autoPlayOnJoin = true,
             lastPlayedIndex = 1
         },
@@ -100,12 +106,10 @@ end
 -- ═══════════════════════════════════════════════
 
 local function sanitizeSettings(settings)
-    -- Pastikan settings selalu valid
     if not settings or type(settings) ~= "table" then
         debug_log("SANITIZE", "Settings not table, using defaults")
         return {
             volume = 5,
-            -- Loop mode dan shuffle TIDAK disimpan, client gunakan default
             autoPlayOnJoin = true,
             lastPlayedIndex = 1
         }
@@ -113,22 +117,16 @@ local function sanitizeSettings(settings)
     
     local sanitized = {}
     
-    -- Volume: 0-10, default 5 (DISIMPAN)
     sanitized.volume = settings.volume or 5
     if type(sanitized.volume) ~= "number" or sanitized.volume < 0 or sanitized.volume > 10 then
         sanitized.volume = 5
     end
     
-    -- Loop Mode: TIDAK DISIMPAN - client gunakan default "all"
-    -- Shuffle: TIDAK DISIMPAN - client gunakan default false
-    
-    -- Auto play (DISIMPAN)
     sanitized.autoPlayOnJoin = settings.autoPlayOnJoin
     if type(sanitized.autoPlayOnJoin) ~= "boolean" then
         sanitized.autoPlayOnJoin = true
     end
     
-    -- Last played index (DISIMPAN)
     sanitized.lastPlayedIndex = settings.lastPlayedIndex or 1
     if type(sanitized.lastPlayedIndex) ~= "number" or sanitized.lastPlayedIndex < 1 then
         sanitized.lastPlayedIndex = 1
@@ -230,8 +228,6 @@ local function validateData(data)
         end
     end
     
-    -- Settings akan di-sanitize, tidak perlu strict validation
-    
     return true, "Data valid"
 end
 
@@ -243,7 +239,7 @@ local function loadPlayerData(player)
     local userId = player.UserId
     local dataKey = getDataKey(userId)
     
-    debug_log("LOAD", "Loading data for " .. player.Name .. " (ID: " .. userId .. ")")
+    debug_log("LOAD", "Loading data for " .. player.Name)
     
     local success, result = pcall(function()
         return MusicDataStore:GetAsync(dataKey)
@@ -254,27 +250,24 @@ local function loadPlayerData(player)
         
         local isValid, message = validateData(result)
         if isValid then
-            -- Sanitize settings untuk memastikan nilai valid
             result.settings = sanitizeSettings(result.settings)
-            
             playerDataCache[userId] = result
-            print("✅ [LOAD] Loaded music data for " .. player.Name)
+            debug_log("LOAD", "Loaded music data for " .. player.Name)
             return result
         else
-            print("⚠️ [LOAD] Invalid data for " .. player.Name .. ": " .. message)
+            error_log("LOAD", "Invalid data for " .. player.Name .. ": " .. message)
             playerDataCache[userId] = getDefaultData()
             return playerDataCache[userId]
         end
     elseif not success then
-        print("❌ [LOAD] Failed to load data for " .. player.Name .. ": " .. tostring(result))
+        error_log("LOAD", "Failed to load data for " .. player.Name .. ": " .. tostring(result))
     else
-        debug_log("LOAD", "No existing data for " .. player.Name .. ", creating new")
+        debug_log("LOAD", "New player detected: " .. player.Name)
     end
     
-    -- Return default data
     local defaultData = getDefaultData()
     playerDataCache[userId] = defaultData
-    print("📝 [LOAD] New player data created for " .. player.Name)
+    debug_log("LOAD", "New player data created for " .. player.Name)
     return defaultData
 end
 
@@ -282,12 +275,11 @@ local function savePlayerData(player, data)
     local userId = player.UserId
     local dataKey = getDataKey(userId)
     
-    -- Sanitize settings sebelum save
     data.settings = sanitizeSettings(data.settings)
     
     local isValid, message = validateData(data)
     if not isValid then
-        print("❌ [SAVE] Cannot save invalid data for " .. player.Name .. ": " .. message)
+        error_log("SAVE", "Cannot save invalid data for " .. player.Name .. ": " .. message)
         pcall(function()
             remoteEvent:FireClient(player, "Error", "Invalid data: " .. message)
         end)
@@ -316,10 +308,11 @@ local function savePlayerData(player, data)
         elseif attempt < maxRetries then
             debug_log("SAVE", "Retry " .. attempt .. " for " .. player.Name)
             task.wait(1)
+        else
+            error_log("SAVE", "Failed to save data for " .. player.Name .. " after " .. maxRetries .. " attempts")
         end
     end
     
-    print("❌ [SAVE] Failed to save data for " .. player.Name)
     pcall(function()
         remoteEvent:FireClient(player, "Error", "Failed to save data after retries")
     end)
@@ -331,13 +324,12 @@ end
 -- ═══════════════════════════════════════════════
 
 Players.PlayerAdded:Connect(function(player)
-    print("🎵 [PLAYER] " .. player.Name .. " joined")
+    debug_log("PLAYER", player.Name .. " joined")
     
     task.spawn(function()
         task.wait(1)
         local data = loadPlayerData(player)
         
-        -- Log data yang dikirim ke client
         debug_log("SEND", "Sending data to " .. player.Name)
         
         pcall(function()
@@ -347,7 +339,7 @@ Players.PlayerAdded:Connect(function(player)
 end)
 
 Players.PlayerRemoving:Connect(function(player)
-    print("👋 [PLAYER] " .. player.Name .. " leaving")
+    debug_log("PLAYER", player.Name .. " leaving")
     
     local userId = player.UserId
     
@@ -357,8 +349,10 @@ Players.PlayerRemoving:Connect(function(player)
             MusicDataStore:SetAsync(dataKey, playerDataCache[userId])
         end)
         
-        if success then
-            print("💾 [SAVE] Final save for " .. player.Name)
+        if not success then
+            error_log("SAVE", "Final save failed for " .. player.Name)
+        else
+            debug_log("SAVE", "Final save for " .. player.Name)
         end
         
         playerDataCache[userId] = nil
@@ -412,7 +406,7 @@ remoteEvent.OnServerEvent:Connect(function(player, action, data)
                     pcall(function()
                         remoteEvent:FireClient(player, "SongAdded", {id = validatedId, title = data.title})
                     end)
-                    print("✅ [ADD] Song added for " .. player.Name .. ": " .. data.title)
+                    debug_log("ADD", "Song added for " .. player.Name .. ": " .. data.title)
                 end
             end
         end
@@ -427,7 +421,7 @@ remoteEvent.OnServerEvent:Connect(function(player, action, data)
                 pcall(function()
                     remoteEvent:FireClient(player, "SongRemoved", {index = data.index})
                 end)
-                print("✅ [REMOVE] Song removed for " .. player.Name)
+                debug_log("REMOVE", "Song removed for " .. player.Name)
             else
                 pcall(function()
                     remoteEvent:FireClient(player, "Error", "Song not found")
@@ -445,10 +439,10 @@ remoteEvent.OnServerEvent:Connect(function(player, action, data)
             local index = table.find(playerData.favorites, data.songId)
             if index then
                 table.remove(playerData.favorites, index)
-                print("⭐ [FAV] Removed favorite for " .. player.Name)
+                debug_log("FAV", "Removed favorite for " .. player.Name)
             else
                 table.insert(playerData.favorites, data.songId)
-                print("⭐ [FAV] Added favorite for " .. player.Name)
+                debug_log("FAV", "Added favorite for " .. player.Name)
             end
             
             savePlayerData(player, playerData)
@@ -479,7 +473,7 @@ remoteEvent.OnServerEvent:Connect(function(player, action, data)
                 pcall(function()
                     remoteEvent:FireClient(player, "PlaylistCreated", {name = data.name})
                 end)
-                print("📋 [PLAYLIST] Created: " .. data.name .. " for " .. player.Name)
+                debug_log("PLAYLIST", "Created: " .. data.name .. " for " .. player.Name)
             end
         end
         
@@ -536,16 +530,18 @@ task.spawn(function()
         task.wait(CONFIG.AUTOSAVE_INTERVAL)
         
         autoSaveCount = autoSaveCount + 1
-        local onlinePlayerCount = #Players:GetPlayers()
+        local savedCount = 0
         
         for _, player in ipairs(Players:GetPlayers()) do
             local userId = player.UserId
             if playerDataCache[userId] then
-                savePlayerData(player, playerDataCache[userId])
+                if savePlayerData(player, playerDataCache[userId]) then
+                    savedCount = savedCount + 1
+                end
             end
         end
         
-        print("💾 [AUTOSAVE] Cycle #" .. autoSaveCount .. " - Saved " .. onlinePlayerCount .. " players")
+        debug_log("AUTOSAVE", "Cycle #" .. autoSaveCount .. " - Saved " .. savedCount .. " players")
     end
 end)
 
@@ -554,7 +550,7 @@ end)
 -- ═══════════════════════════════════════════════
 
 game:BindToClose(function()
-    print("🛑 [SHUTDOWN] Server shutting down, saving all data...")
+    warn("🛑 [SHUTDOWN] Server shutting down, saving all data...")
     
     for _, player in ipairs(Players:GetPlayers()) do
         local userId = player.UserId
@@ -567,7 +563,7 @@ game:BindToClose(function()
     end
     
     task.wait(2)
-    print("✅ [SHUTDOWN] Shutdown save complete")
+    warn("✅ [SHUTDOWN] Shutdown save complete")
 end)
 
 -- ═══════════════════════════════════════════════
@@ -578,8 +574,6 @@ print("━━━━━━━━━━━━━━━━━━━━━━━━�
 print("  ✨ MUSIC PLAYER SERVER ✨")
 print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
 print("💾 DataStore: " .. CONFIG.DATASTORE_NAME)
-print("⏰ Auto-save: Every " .. CONFIG.AUTOSAVE_INTERVAL .. " seconds")
-print("📊 Max songs: " .. CONFIG.MAX_CUSTOM_SONGS)
-print("📋 Max playlists: " .. CONFIG.MAX_PLAYLISTS)
-print("🔧 Debug Mode: " .. (CONFIG.DEBUG_MODE and "ON" or "OFF"))
+print("⏰ Auto-save: " .. CONFIG.AUTOSAVE_INTERVAL .. "s")
+print("🔧 Debug: " .. (CONFIG.DEBUG_MODE and "ON" or "OFF"))
 print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
