@@ -11,6 +11,9 @@
 local Players = game:GetService("Players")
 local StarterGui = game:GetService("StarterGui")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local RunService = game:GetService("RunService")
+local UserInputService = game:GetService("UserInputService")
+local TweenService = game:GetService("TweenService")
 local LocalPlayer = Players.LocalPlayer
 local PlayerGui = LocalPlayer:WaitForChild("PlayerGui")
 
@@ -57,6 +60,25 @@ local scripts = {
         next = nil,
         info = nil,
         toggleUI = nil
+    },
+    freecam = {
+        enabled = false,
+        cam = workspace.CurrentCamera,
+        origCFrame = nil,
+        origCamType = nil,
+        origCamSub = nil,
+        moveSpeed = 1,
+        rotSpeed = 0.05,
+        zoomSpeed = 3,
+        gui = nil,
+        conns = {},
+        hiddenG = {},
+        coreE = {},
+        hiddenTitles = {},
+        toggleUI = nil,
+        isMobile = false,
+        lastInteraction = 0,
+        hideTimer = nil
     }
 }
 
@@ -259,7 +281,7 @@ function scripts.hideUI:toggle()
         
         self:hideTitles()
         
-        self.titleMonitor = game:GetService("RunService").Heartbeat:Connect(function()
+        self.titleMonitor = RunService.Heartbeat:Connect(function()
             if self.enabled then
                 for _, p in pairs(Players:GetPlayers()) do
                     if p.Character then
@@ -628,6 +650,343 @@ function scripts.spectator:setup()
 end
 
 -- ═══════════════════════════════════════════════
+-- FREECAM SCRIPT
+-- ═══════════════════════════════════════════════
+
+function scripts.freecam:hideTitles()
+    for _, p in pairs(Players:GetPlayers()) do
+        if p.Character then
+            pcall(function()
+                for _, obj in pairs(p.Character:GetDescendants()) do
+                    if obj:IsA("BillboardGui") then
+                        self.hiddenTitles[obj] = obj.Enabled
+                        obj.Enabled = false
+                    end
+                end
+                
+                local humanoid = p.Character:FindFirstChildOfClass("Humanoid")
+                if humanoid then
+                    self.hiddenTitles[humanoid] = humanoid.DisplayDistanceType
+                    humanoid.DisplayDistanceType = Enum.HumanoidDisplayDistanceType.None
+                end
+            end)
+        end
+    end
+end
+
+function scripts.freecam:showTitles()
+    for obj, state in pairs(self.hiddenTitles) do
+        pcall(function()
+            if obj and obj.Parent then
+                if obj:IsA("BillboardGui") then
+                    obj.Enabled = state
+                elseif obj:IsA("Humanoid") then
+                    obj.DisplayDistanceType = state
+                end
+            end
+        end)
+    end
+    self.hiddenTitles = {}
+end
+
+function scripts.freecam:hideGameUI()
+    pcall(function()
+        local e = StarterGui:GetCoreGuiEnabled(Enum.CoreGuiType.Health)
+        self.coreE[Enum.CoreGuiType.Health] = e
+        if e then
+            StarterGui:SetCoreGuiEnabled(Enum.CoreGuiType.Health, false)
+        end
+    end)
+    
+    pcall(function()
+        local e = StarterGui:GetCoreGuiEnabled(Enum.CoreGuiType.Backpack)
+        self.coreE[Enum.CoreGuiType.Backpack] = e
+        if e then
+            StarterGui:SetCoreGuiEnabled(Enum.CoreGuiType.Backpack, false)
+        end
+    end)
+    
+    for _, g in pairs(PlayerGui:GetChildren()) do
+        if g:IsA("ScreenGui") and g.Name ~= "AdvancedSettingsGui" and g.Name ~= "FreecamControlsGUI" then
+            self.hiddenG[g] = g.Enabled
+            g.Enabled = false
+        end
+    end
+end
+
+function scripts.freecam:showGameUI()
+    for g, e in pairs(self.coreE) do
+        pcall(function()
+            if e then
+                StarterGui:SetCoreGuiEnabled(g, true)
+            end
+        end)
+    end
+    self.coreE = {}
+    
+    for g, e in pairs(self.hiddenG) do
+        pcall(function()
+            if g and g.Parent then
+                g.Enabled = e
+            end
+        end)
+    end
+    self.hiddenG = {}
+end
+
+function scripts.freecam:showButtons()
+    if not self.gui then return end
+    
+    for _, child in pairs(self.gui:GetChildren()) do
+        if child:IsA("TextButton") then
+            TweenService:Create(child, TweenInfo.new(0.2), {BackgroundTransparency = 0.3}):Play()
+            TweenService:Create(child, TweenInfo.new(0.2), {TextTransparency = 0}):Play()
+        end
+    end
+    
+    self.lastInteraction = tick()
+end
+
+function scripts.freecam:hideButtons()
+    if not self.gui then return end
+    
+    for _, child in pairs(self.gui:GetChildren()) do
+        if child:IsA("TextButton") then
+            TweenService:Create(child, TweenInfo.new(0.3), {BackgroundTransparency = 1}):Play()
+            TweenService:Create(child, TweenInfo.new(0.3), {TextTransparency = 1}):Play()
+        end
+    end
+end
+
+function scripts.freecam:createUI(isMobile)
+    if self.gui then return end
+    
+    local g = Instance.new("ScreenGui")
+    g.Name = "FreecamControlsGUI"
+    g.ResetOnSpawn = false
+    g.DisplayOrder = 999999
+    g.Parent = PlayerGui
+    
+    local btnWidth = isMobile and 40 or 50
+    local btnHeight = isMobile and 28 or 35
+    local fontSize = isMobile and 16 or 18
+    local spacing = 5
+    
+    local function createBtn(txt, pos)
+        local btn = Instance.new("TextButton")
+        btn.Size = UDim2.new(0, btnWidth, 0, btnHeight)
+        btn.Position = pos
+        btn.BackgroundColor3 = Color3.fromRGB(30, 30, 30)
+        btn.BackgroundTransparency = 0.3
+        btn.BorderSizePixel = 0
+        btn.Text = txt
+        btn.TextColor3 = Color3.fromRGB(255, 255, 255)
+        btn.Font = Enum.Font.GothamBold
+        btn.TextSize = fontSize
+        btn.Parent = g
+        
+        local corner = Instance.new("UICorner")
+        corner.CornerRadius = UDim.new(0, 6)
+        corner.Parent = btn
+        
+        return btn
+    end
+    
+    -- LEFT SIDE: Movement Controls (Cross layout)
+    local upBtn = createBtn("▲", UDim2.new(0, 10 + btnWidth + spacing, 1, -10 - btnHeight * 2 - spacing))
+    local leftBtn = createBtn("◄", UDim2.new(0, 10, 1, -10 - btnHeight))
+    local rightBtn = createBtn("►", UDim2.new(0, 10 + (btnWidth + spacing) * 2, 1, -10 - btnHeight))
+    local downBtn = createBtn("▼", UDim2.new(0, 10 + btnWidth + spacing, 1, -10 - btnHeight))
+    
+    -- RIGHT SIDE: Rotation and Zoom Controls (Cross layout)
+    local rotUpBtn = createBtn("UP", UDim2.new(1, -10 - btnWidth * 2 - spacing, 1, -10 - btnHeight * 2 - spacing))
+    local zoomOutBtn = createBtn("-", UDim2.new(1, -10 - btnWidth * 3 - spacing * 2, 1, -10 - btnHeight))
+    local zoomInBtn = createBtn("+", UDim2.new(1, -10 - btnWidth, 1, -10 - btnHeight))
+    local rotDownBtn = createBtn("DN", UDim2.new(1, -10 - btnWidth * 2 - spacing, 1, -10 - btnHeight))
+    
+    self.gui = g
+    
+    -- Setup button interactions
+    local function setupButton(btn, directionFunc)
+        btn.MouseButton1Down:Connect(function()
+            directionFunc(true)
+            self:showButtons()
+        end)
+        btn.MouseButton1Up:Connect(function()
+            directionFunc(false)
+        end)
+        btn.MouseLeave:Connect(function()
+            directionFunc(false)
+        end)
+        btn.TouchTap:Connect(function()
+            directionFunc(true)
+            self:showButtons()
+            task.wait(0.1)
+            directionFunc(false)
+        end)
+    end
+    
+    -- Movement buttons
+    setupButton(upBtn, function(state) self.moveUp = state end)
+    setupButton(downBtn, function(state) self.moveDown = state end)
+    setupButton(leftBtn, function(state) self.moveLeft = state end)
+    setupButton(rightBtn, function(state) self.moveRight = state end)
+    
+    -- Rotation and Zoom buttons
+    setupButton(rotUpBtn, function(state) self.rotUp = state end)
+    setupButton(rotDownBtn, function(state) self.rotDown = state end)
+    setupButton(zoomInBtn, function(state) self.zoomIn = state end)
+    setupButton(zoomOutBtn, function(state) self.zoomOut = state end)
+end
+
+function scripts.freecam:toggle(isMobile)
+    self.enabled = not self.enabled
+    self.isMobile = isMobile
+    
+    if self.enabled then
+        if _G.AdvancedSettings.menuOpen then
+            _G.AdvancedSettings.toggleMenu()
+        end
+        
+        self.origCFrame = self.cam.CFrame
+        self.origCamType = self.cam.CameraType
+        self.origCamSub = self.cam.CameraSubject
+        
+        self.cam.CameraType = Enum.CameraType.Scriptable
+        
+        self:hideGameUI()
+        self:hideTitles()
+        
+        if not self.gui then
+            self:createUI(isMobile)
+        end
+        
+        if self.gui then
+            self.gui.Enabled = true
+        end
+        
+        self.moveUp = false
+        self.moveDown = false
+        self.moveLeft = false
+        self.moveRight = false
+        self.rotUp = false
+        self.rotDown = false
+        self.zoomIn = false
+        self.zoomOut = false
+        self.lastInteraction = tick()
+        
+        -- Auto-hide timer (3 seconds)
+        if self.hideTimer then
+            self.hideTimer:Disconnect()
+        end
+        self.hideTimer = RunService.Heartbeat:Connect(function()
+            if self.enabled and tick() - self.lastInteraction > 3 then
+                self:hideButtons()
+            end
+        end)
+        
+        -- Movement, rotation, and zoom loop
+        table.insert(self.conns, RunService.RenderStepped:Connect(function(dt)
+            if not self.enabled then return end
+            
+            local moveDelta = Vector3.zero
+            
+            if self.moveUp then
+                moveDelta = moveDelta + Vector3.new(0, self.moveSpeed, 0)
+            end
+            if self.moveDown then
+                moveDelta = moveDelta - Vector3.new(0, self.moveSpeed, 0)
+            end
+            if self.moveLeft then
+                moveDelta = moveDelta - (self.cam.CFrame.RightVector * self.moveSpeed)
+            end
+            if self.moveRight then
+                moveDelta = moveDelta + (self.cam.CFrame.RightVector * self.moveSpeed)
+            end
+            
+            if moveDelta.Magnitude > 0 then
+                self.cam.CFrame = self.cam.CFrame + moveDelta
+                self.cam.Focus = self.cam.CFrame
+            end
+            
+            -- Rotation
+            if self.rotUp then
+                local rotX = CFrame.Angles(self.rotSpeed, 0, 0)
+                self.cam.CFrame = self.cam.CFrame * rotX
+                self.cam.Focus = self.cam.CFrame
+            end
+            if self.rotDown then
+                local rotX = CFrame.Angles(-self.rotSpeed, 0, 0)
+                self.cam.CFrame = self.cam.CFrame * rotX
+                self.cam.Focus = self.cam.CFrame
+            end
+            
+            -- Zoom
+            if self.zoomIn then
+                self.cam.CFrame = self.cam.CFrame + (self.cam.CFrame.LookVector * self.zoomSpeed)
+                self.cam.Focus = self.cam.CFrame
+            end
+            if self.zoomOut then
+                self.cam.CFrame = self.cam.CFrame - (self.cam.CFrame.LookVector * self.zoomSpeed)
+                self.cam.Focus = self.cam.CFrame
+            end
+        end))
+        
+        -- Mouse wheel zoom for PC only
+        if not isMobile then
+            table.insert(self.conns, UserInputService.InputChanged:Connect(function(input, gpe)
+                if not self.enabled then return end
+                
+                if input.UserInputType == Enum.UserInputType.MouseWheel then
+                    local zoomAmount = input.Position.Z * 3
+                    self.cam.CFrame = self.cam.CFrame + (self.cam.CFrame.LookVector * zoomAmount)
+                    self.cam.Focus = self.cam.CFrame
+                    self:showButtons()
+                end
+            end))
+        end
+        
+        -- Show buttons on any touch
+        table.insert(self.conns, UserInputService.TouchStarted:Connect(function(touch, gpe)
+            if self.enabled then
+                self:showButtons()
+            end
+        end))
+        
+    else
+        if self.hideTimer then
+            self.hideTimer:Disconnect()
+            self.hideTimer = nil
+        end
+        
+        for _, conn in ipairs(self.conns) do
+            pcall(function() conn:Disconnect() end)
+        end
+        self.conns = {}
+        
+        self.cam.CameraType = self.origCamType or Enum.CameraType.Custom
+        self.cam.CameraSubject = self.origCamSub
+        
+        if self.gui then
+            self.gui.Enabled = false
+        end
+        
+        self:showGameUI()
+        self:showTitles()
+    end
+    
+    if self.toggleUI then
+        self.toggleUI(self.enabled)
+    end
+    
+    return self.enabled
+end
+
+function scripts.freecam:setup()
+    -- Setup selesai
+end
+
+-- ═══════════════════════════════════════════════
 -- RESET TO BASE ACTION
 -- ═══════════════════════════════════════════════
 
@@ -677,18 +1036,14 @@ end
 -- ═══════════════════════════════════════════════
 
 function GameplayTab.createContent(contentScroll, colors, isMobile, utils)
-    -- SETUP ANTI OVER-SCROLL & NO HORIZONTAL SCROLL
     contentScroll.ScrollingDirection = Enum.ScrollingDirection.Y
     contentScroll.ElasticBehavior = Enum.ElasticBehavior.Never
     
-    -- Monitor scroll position
     contentScroll:GetPropertyChangedSignal("CanvasPosition"):Connect(function()
-        -- BLOCK HORIZONTAL SCROLL
         if contentScroll.CanvasPosition.X ~= 0 then
             contentScroll.CanvasPosition = Vector2.new(0, contentScroll.CanvasPosition.Y)
         end
         
-        -- BLOCK VERTICAL OVER-SCROLL
         local maxScroll = contentScroll.CanvasSize.Y.Offset - contentScroll.AbsoluteSize.Y
         
         if maxScroll <= 0 then
@@ -708,6 +1063,7 @@ function GameplayTab.createContent(contentScroll, colors, isMobile, utils)
         {id = "hidePlayers", name = "Hide Players", desc = "Make all players invisible", type = "toggle"},
         {id = "hideUI", name = "Hide All UI", desc = "Hide Health, Backpack & Titles", type = "toggle"},
         {id = "spectator", name = "Spectator Mode", desc = "Watch other players", type = "toggle", needsIsMobile = true},
+        {id = "freecam", name = "Freecam Mode", desc = "Free camera movement", type = "toggle", needsIsMobile = true},
         {id = "resetBase", name = "Reset to Base", desc = "Teleport to Basecamp", type = "action"}
     }
     
@@ -761,7 +1117,6 @@ function GameplayTab.createContent(contentScroll, colors, isMobile, utils)
         descLabel.Parent = textContainer
         
         if feature.type == "toggle" then
-            -- Toggle Switch
             local toggleBg = Instance.new("Frame")
             toggleBg.Size = UDim2.new(0,isMobile and 32 or 38,0,isMobile and 16 or 20)
             toggleBg.Position = UDim2.new(1,isMobile and -36 or -50,0.5,isMobile and -8 or -10)
@@ -828,7 +1183,6 @@ function GameplayTab.createContent(contentScroll, colors, isMobile, utils)
             end)
             
         elseif feature.type == "action" then
-            -- Execute Button
             local actionBtn = Instance.new("TextButton")
             actionBtn.Size = UDim2.new(0, isMobile and 65 or 70, 0, isMobile and 26 or 28)
             actionBtn.Position = UDim2.new(1, isMobile and -72 or -80, 0.5, isMobile and -13 or -14)
@@ -887,6 +1241,7 @@ function GameplayTab.setup()
     scripts.hidePlayers:setup()
     scripts.hideUI:setup()
     scripts.spectator:setup()
+    scripts.freecam:setup()
     print("✅ Gameplay Tab: Setup complete")
 end
 
@@ -901,6 +1256,10 @@ function GameplayTab.cleanup()
             script.titleMonitor:Disconnect()
             script.titleMonitor = nil
         end
+        if script.hideTimer then
+            script.hideTimer:Disconnect()
+            script.hideTimer = nil
+        end
         
         if script.isSpec then
             script:stopSpec()
@@ -911,7 +1270,7 @@ function GameplayTab.cleanup()
         end
         
         if script.enabled then
-            if script.id == "spectator" then
+            if script.id == "spectator" or script.id == "freecam" then
                 script:toggle(false)
             else
                 script:toggle()
