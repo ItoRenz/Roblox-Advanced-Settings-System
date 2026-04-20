@@ -6,6 +6,20 @@
     Place in: StarterPlayer > StarterPlayerScripts > AdvancedSettings > Tabs > GameplayTab
     Type: ModuleScript
     ═══════════════════════════════════════════════
+    PATCH: Console Support Added
+    - Semua toggle: MouseButton1Click + Activated (ButtonA gamepad)
+    - MouseEnter/MouseLeave dihilangkan di console
+    - Action button Execute: support Activated
+    - Spectator: prev/next via ButtonL1/ButtonR1 (LB/RB)
+    - Freecam:
+        * LeftThumbstick  = gerak (maju/mundur/kiri/kanan)
+        * RightThumbstick = rotasi kamera (kiri/kanan/atas/bawah)
+        * DPad Up/Down    = zoom in/out
+        * ButtonB         = exit freecam
+        * UI buttons tetap ada (mobile style) untuk console
+    - needsIsMobile → needsPlatform (pass isMobile, isConsole)
+    - UI text lebih besar di console
+    ═══════════════════════════════════════════════
 ]]
 
 local Players = game:GetService("Players")
@@ -14,6 +28,7 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local RunService = game:GetService("RunService")
 local UserInputService = game:GetService("UserInputService")
 local TweenService = game:GetService("TweenService")
+
 local LocalPlayer = Players.LocalPlayer
 local PlayerGui = LocalPlayer:WaitForChild("PlayerGui")
 
@@ -25,21 +40,21 @@ local GameplayTab = {}
 
 local scripts = {
     hideTitle = {
-        enabled = false, 
-        conns = {}, 
+        enabled = false,
+        conns = {},
         hidden = {},
         toggleUI = nil
     },
     hidePlayers = {
-        enabled = false, 
-        conns = {}, 
-        hiddenP = {}, 
+        enabled = false,
+        conns = {},
+        hiddenP = {},
         origT = {},
         toggleUI = nil
     },
     hideUI = {
-        enabled = false, 
-        origS = {}, 
+        enabled = false,
+        origS = {},
         coreS = {},
         hiddenTitles = {},
         toggleUI = nil
@@ -77,12 +92,24 @@ local scripts = {
         hiddenTitles = {},
         toggleUI = nil,
         isMobile = false,
+        isConsole = false,
         lastInteraction = 0,
-        hideTimer = nil
+        hideTimer = nil,
+        -- State flags untuk semua input
+        moveUp = false, moveDown = false,
+        moveLeft = false, moveRight = false,
+        rotUp = false, rotDown = false,
+        zoomIn = false, zoomOut = false,
+        -- PATCH: Thumbstick values untuk console
+        leftStick = Vector2.zero,
+        rightStick = Vector2.zero,
     }
 }
 
--- Hide Title Script
+-- ═══════════════════════════════════════════════
+-- HIDE TITLE SCRIPT
+-- ═══════════════════════════════════════════════
+
 function scripts.hideTitle:hideGui(character, hide)
     if not character then return end
     pcall(function()
@@ -117,33 +144,28 @@ function scripts.hideTitle:toggle()
             self:hideGui(p.Character, self.enabled)
         end
     end
-    if self.toggleUI then
-        self.toggleUI(self.enabled)
-    end
+    if self.toggleUI then self.toggleUI(self.enabled) end
     return self.enabled
 end
 
 function scripts.hideTitle:setup()
     local function onChar(c)
         task.wait(0.5)
-        if self.enabled then
-            self:hideGui(c, true)
-        end
+        if self.enabled then self:hideGui(c, true) end
     end
-    
     for _, p in pairs(Players:GetPlayers()) do
-        if p.Character then
-            onChar(p.Character)
-        end
+        if p.Character then onChar(p.Character) end
         table.insert(self.conns, p.CharacterAdded:Connect(onChar))
     end
-    
     table.insert(self.conns, Players.PlayerAdded:Connect(function(p)
         table.insert(self.conns, p.CharacterAdded:Connect(onChar))
     end))
 end
 
--- Hide Players Script
+-- ═══════════════════════════════════════════════
+-- HIDE PLAYERS SCRIPT
+-- ═══════════════════════════════════════════════
+
 function scripts.hidePlayers:hideChar(c)
     if not c or self.hiddenP[c] then return end
     self.hiddenP[c] = true
@@ -171,9 +193,7 @@ function scripts.hidePlayers:showChar(c)
         pcall(function()
             if o:IsA("BasePart") then
                 o.Transparency = self.origT[o] or 0
-                if o.Name ~= "HumanoidRootPart" then
-                    o.CanCollide = true
-                end
+                if o.Name ~= "HumanoidRootPart" then o.CanCollide = true end
             elseif o:IsA("Decal") or o:IsA("Texture") then
                 o.Transparency = self.origT[o] or 0
             elseif o:IsA("BillboardGui") and self.origT[o] ~= nil then
@@ -187,16 +207,11 @@ function scripts.hidePlayers:toggle()
     self.enabled = not self.enabled
     for _, p in pairs(Players:GetPlayers()) do
         if p ~= LocalPlayer and p.Character then
-            if self.enabled then
-                self:hideChar(p.Character)
-            else
-                self:showChar(p.Character)
-            end
+            if self.enabled then self:hideChar(p.Character)
+            else self:showChar(p.Character) end
         end
     end
-    if self.toggleUI then
-        self.toggleUI(self.enabled)
-    end
+    if self.toggleUI then self.toggleUI(self.enabled) end
     return self.enabled
 end
 
@@ -205,15 +220,16 @@ function scripts.hidePlayers:setup()
         if p ~= LocalPlayer then
             table.insert(self.conns, p.CharacterAdded:Connect(function(c)
                 task.wait(0.5)
-                if self.enabled then
-                    self:hideChar(c)
-                end
+                if self.enabled then self:hideChar(c) end
             end))
         end
     end
 end
 
--- Hide UI Script
+-- ═══════════════════════════════════════════════
+-- HIDE UI SCRIPT
+-- ═══════════════════════════════════════════════
+
 function scripts.hideUI:hideTitles()
     for _, p in pairs(Players:GetPlayers()) do
         if p.Character then
@@ -226,7 +242,6 @@ function scripts.hideUI:hideTitles()
                         end
                     end
                 end
-                
                 local humanoid = p.Character:FindFirstChildOfClass("Humanoid")
                 if humanoid then
                     if self.hiddenTitles[humanoid] == nil then
@@ -243,11 +258,8 @@ function scripts.hideUI:showTitles()
     for obj, state in pairs(self.hiddenTitles) do
         pcall(function()
             if obj and obj.Parent then
-                if obj:IsA("BillboardGui") then
-                    obj.Enabled = state
-                elseif obj:IsA("Humanoid") then
-                    obj.DisplayDistanceType = state
-                end
+                if obj:IsA("BillboardGui") then obj.Enabled = state
+                elseif obj:IsA("Humanoid") then obj.DisplayDistanceType = state end
             end
         end)
     end
@@ -256,31 +268,24 @@ end
 
 function scripts.hideUI:toggle()
     self.enabled = not self.enabled
-    
     if self.enabled then
         self.origS = {}
         self.coreS = {}
-        
         local coreGuis = {Enum.CoreGuiType.Health, Enum.CoreGuiType.Backpack}
         for _, g in pairs(coreGuis) do
             pcall(function()
                 local e = StarterGui:GetCoreGuiEnabled(g)
                 self.coreS[g] = e
-                if e then
-                    StarterGui:SetCoreGuiEnabled(g, false)
-                end
+                if e then StarterGui:SetCoreGuiEnabled(g, false) end
             end)
         end
-        
         for _, g in pairs(PlayerGui:GetChildren()) do
             if g.Name ~= "AdvancedSettingsGui" and g:IsA("ScreenGui") then
                 self.origS[g] = g.Enabled
                 g.Enabled = false
             end
         end
-        
         self:hideTitles()
-        
         self.titleMonitor = RunService.Heartbeat:Connect(function()
             if self.enabled then
                 for _, p in pairs(Players:GetPlayers()) do
@@ -299,38 +304,22 @@ function scripts.hideUI:toggle()
                 end
             end
         end)
-        
     else
         for g, e in pairs(self.coreS) do
-            pcall(function()
-                if e then
-                    StarterGui:SetCoreGuiEnabled(g, true)
-                end
-            end)
+            pcall(function() if e then StarterGui:SetCoreGuiEnabled(g, true) end end)
         end
         self.coreS = {}
-        
         for g, s in pairs(self.origS) do
-            pcall(function()
-                if g.Parent then
-                    g.Enabled = s
-                end
-            end)
+            pcall(function() if g.Parent then g.Enabled = s end end)
         end
         self.origS = {}
-        
         self:showTitles()
-        
         if self.titleMonitor then
             self.titleMonitor:Disconnect()
             self.titleMonitor = nil
         end
     end
-    
-    if self.toggleUI then
-        self.toggleUI(self.enabled)
-    end
-    
+    if self.toggleUI then self.toggleUI(self.enabled) end
     return self.enabled
 end
 
@@ -346,7 +335,6 @@ function scripts.hideUI:setup()
                             obj.Enabled = false
                         end
                     end
-                    
                     local humanoid = character:FindFirstChildOfClass("Humanoid")
                     if humanoid then
                         self.hiddenTitles[humanoid] = humanoid.DisplayDistanceType
@@ -372,7 +360,6 @@ function scripts.spectator:hideTitles()
                         obj.Enabled = false
                     end
                 end
-                
                 local humanoid = p.Character:FindFirstChildOfClass("Humanoid")
                 if humanoid then
                     self.hiddenTitles[humanoid] = humanoid.DisplayDistanceType
@@ -387,11 +374,8 @@ function scripts.spectator:showTitles()
     for obj, state in pairs(self.hiddenTitles) do
         pcall(function()
             if obj and obj.Parent then
-                if obj:IsA("BillboardGui") then
-                    obj.Enabled = state
-                elseif obj:IsA("Humanoid") then
-                    obj.DisplayDistanceType = state
-                end
+                if obj:IsA("BillboardGui") then obj.Enabled = state
+                elseif obj:IsA("Humanoid") then obj.DisplayDistanceType = state end
             end
         end)
     end
@@ -404,9 +388,7 @@ function scripts.spectator:hideGameUI()
         pcall(function()
             local e = StarterGui:GetCoreGuiEnabled(g)
             self.coreE[g] = e
-            if e then
-                StarterGui:SetCoreGuiEnabled(g, false)
-            end
+            if e then StarterGui:SetCoreGuiEnabled(g, false) end
         end)
     end
     for _, g in pairs(PlayerGui:GetChildren()) do
@@ -419,19 +401,11 @@ end
 
 function scripts.spectator:showGameUI()
     for g, e in pairs(self.coreE) do
-        pcall(function()
-            if e then
-                StarterGui:SetCoreGuiEnabled(g, true)
-            end
-        end)
+        pcall(function() if e then StarterGui:SetCoreGuiEnabled(g, true) end end)
     end
     self.coreE = {}
     for g, e in pairs(self.hiddenG) do
-        pcall(function()
-            if g and g.Parent then
-                g.Enabled = e
-            end
-        end)
+        pcall(function() if g and g.Parent then g.Enabled = e end end)
     end
     self.hiddenG = {}
 end
@@ -439,16 +413,14 @@ end
 function scripts.spectator:updateList()
     self.list = {}
     for _, p in pairs(Players:GetPlayers()) do
-        if p.Character and p.Character:FindFirstChild("Humanoid") then
+        if p ~= LocalPlayer and p.Character and p.Character:FindFirstChild("Humanoid") then
             table.insert(self.list, p)
         end
     end
 end
 
 function scripts.spectator:specPlayer(p)
-    if not (p and p.Character and p.Character:FindFirstChild("Humanoid")) then
-        return false
-    end
+    if not (p and p.Character and p.Character:FindFirstChild("Humanoid")) then return false end
     self.cam.CameraSubject = p.Character.Humanoid
     return true
 end
@@ -464,41 +436,44 @@ function scripts.spectator:stopSpec()
     self:showTitles()
 end
 
-function scripts.spectator:createUI(isMobile)
+function scripts.spectator:createUI(isMobile, isConsole)
     if self.gui then return end
-    
+
     local g = Instance.new("ScreenGui")
     g.Name = "SpectatorControlsGUI"
     g.ResetOnSpawn = false
     g.DisplayOrder = 999998
     g.Parent = PlayerGui
-    
-    local function createNav(txt, pos, size, textSize)
+
+    -- PATCH: Ukuran tombol lebih besar di console
+    local btnW = isConsole and 80 or (isMobile and 50 or 60)
+    local btnH = isConsole and 60 or (isMobile and 60 or 80)
+    local txtSz = isConsole and 28 or (isMobile and 32 or 40)
+
+    local function createNav(txt, pos)
         local b = Instance.new("TextButton")
         b.Text = txt
         b.Font = Enum.Font.GothamBold
         b.TextColor3 = Color3.fromRGB(255, 255, 255)
-        b.BackgroundTransparency = 1
-        b.TextSize = textSize
-        b.Size = size
+        b.BackgroundColor3 = Color3.fromRGB(30, 30, 30)
+        b.BackgroundTransparency = 0.3
+        b.BorderSizePixel = 0
+        b.TextSize = txtSz
+        b.Size = UDim2.new(0, btnW, 0, btnH)
         b.Position = pos
         b.Visible = false
+        b.Selectable = isConsole
         b.Parent = g
+        local corner = Instance.new("UICorner")
+        corner.CornerRadius = UDim.new(0, 10)
+        corner.Parent = b
         return b
     end
-    
-    if isMobile then
-        self.prev = createNav("◀", UDim2.new(0, 10, 0.5, -30), UDim2.new(0, 50, 0, 60), 32)
-    else
-        self.prev = createNav("◀", UDim2.new(0, 15, 0.5, -40), UDim2.new(0, 60, 0, 80), 40)
-    end
-    
-    if isMobile then
-        self.next = createNav("▶", UDim2.new(1, -60, 0.5, -30), UDim2.new(0, 50, 0, 60), 32)
-    else
-        self.next = createNav("▶", UDim2.new(1, -75, 0.5, -40), UDim2.new(0, 60, 0, 80), 40)
-    end
-    
+
+    local xOff = isConsole and 30 or 15
+    self.prev = createNav("◀", UDim2.new(0, xOff, 0.5, -btnH/2))
+    self.next = createNav("▶", UDim2.new(1, -(xOff + btnW), 0.5, -btnH/2))
+
     self.info = Instance.new("TextLabel")
     self.info.Text = ""
     self.info.Font = Enum.Font.GothamBold
@@ -508,8 +483,12 @@ function scripts.spectator:createUI(isMobile)
     self.info.BorderSizePixel = 0
     self.info.Visible = false
     self.info.Parent = g
-    
-    if isMobile then
+
+    if isConsole then
+        self.info.Size = UDim2.new(0, 420, 0, 44)
+        self.info.Position = UDim2.new(0.5, -210, 0.85, 60)
+        self.info.TextSize = 20
+    elseif isMobile then
         self.info.Size = UDim2.new(0, 240, 0, 20)
         self.info.Position = UDim2.new(0.5, -120, 0.85, 20)
         self.info.TextSize = 14
@@ -518,75 +497,105 @@ function scripts.spectator:createUI(isMobile)
         self.info.Position = UDim2.new(0.5, -140, 0.85, 60)
         self.info.TextSize = 16
     end
-    
+
     local corner = Instance.new("UICorner")
     corner.CornerRadius = UDim.new(0, 10)
     corner.Parent = self.info
-    
+
+    -- PATCH: Console hint label
+    if isConsole then
+        local hint = Instance.new("TextLabel")
+        hint.Size = UDim2.new(0, 360, 0, 32)
+        hint.Position = UDim2.new(0.5, -180, 0.85, 110)
+        hint.BackgroundColor3 = Color3.new(0,0,0)
+        hint.BackgroundTransparency = 0.5
+        hint.BorderSizePixel = 0
+        hint.Text = "🎮  LB = Prev   RB = Next   B = Exit"
+        hint.TextColor3 = Color3.fromRGB(200, 200, 200)
+        hint.Font = Enum.Font.Gotham
+        hint.TextSize = 15
+        hint.Visible = false
+        hint.Parent = g
+        local hintCorner = Instance.new("UICorner")
+        hintCorner.CornerRadius = UDim.new(0, 8)
+        hintCorner.Parent = hint
+        self.hintLabel = hint
+    end
+
     self.gui = g
-    
+
     local function nav(dir)
         if not (self.isSpec and #self.list > 0) then return end
         self:updateList()
         if #self.list == 0 then
             self:stopSpec()
             self.enabled = false
-            if self.toggleUI then
-                self.toggleUI(false)
-            end
+            if self.toggleUI then self.toggleUI(false) end
             self.prev.Visible = false
             self.next.Visible = false
             self.info.Visible = false
+            if self.hintLabel then self.hintLabel.Visible = false end
             return
         end
-        
         if dir == "prev" then
             self.idx = self.idx - 1
-            if self.idx < 1 then
-                self.idx = #self.list
-            end
+            if self.idx < 1 then self.idx = #self.list end
         else
             self.idx = self.idx + 1
-            if self.idx > #self.list then
-                self.idx = 1
-            end
+            if self.idx > #self.list then self.idx = 1 end
         end
-        
         if self:specPlayer(self.list[self.idx]) then
             local p = self.list[self.idx]
             self.info.Text = p.DisplayName .. " (@" .. p.Name .. ")"
         end
     end
-    
+
+    -- PATCH: MouseButton1Click + Activated untuk gamepad
     self.prev.MouseButton1Click:Connect(function() nav("prev") end)
+    self.prev.Activated:Connect(function() nav("prev") end)
     self.next.MouseButton1Click:Connect(function() nav("next") end)
+    self.next.Activated:Connect(function() nav("next") end)
+
+    -- PATCH: Console gamepad LB/RB untuk navigasi spectator
+    if isConsole then
+        UserInputService.InputBegan:Connect(function(input, gp)
+            if gp then return end
+            if not self.isSpec then return end
+            if input.KeyCode == Enum.KeyCode.ButtonL1 then
+                nav("prev")
+            elseif input.KeyCode == Enum.KeyCode.ButtonR1 then
+                nav("next")
+            elseif input.KeyCode == Enum.KeyCode.ButtonB then
+                self:toggle(isMobile, isConsole)
+            end
+        end)
+    end
 end
 
-function scripts.spectator:toggle(isMobile)
+function scripts.spectator:toggle(isMobile, isConsole)
     self.enabled = not self.enabled
     self.isSpec = self.enabled
-    
+
     if not self.gui then
-        self:createUI(isMobile)
+        self:createUI(isMobile, isConsole)
     end
-    
+
     if self.isSpec then
         self.origSub = self.cam.CameraSubject
         self:updateList()
+
         if #self.list > 0 then
             self.idx = 1
-            
             if _G.AdvancedSettings.menuOpen then
                 _G.AdvancedSettings.toggleMenu()
             end
-            
             self:hideGameUI()
             self:hideTitles()
-            
             if self:specPlayer(self.list[1]) then
                 self.prev.Visible = true
                 self.next.Visible = true
                 self.info.Visible = true
+                if self.hintLabel then self.hintLabel.Visible = true end
                 local p = self.list[1]
                 self.info.Text = p.DisplayName .. " (@" .. p.Name .. ")"
             else
@@ -596,10 +605,8 @@ function scripts.spectator:toggle(isMobile)
         else
             self.info.Visible = true
             self.info.Text = "No players to spectate!"
-            task.delay(2, function() 
-                if self.info then
-                    self.info.Visible = false 
-                end
+            task.delay(2, function()
+                if self.info then self.info.Visible = false end
             end)
             self.isSpec = false
             self.enabled = false
@@ -609,12 +616,10 @@ function scripts.spectator:toggle(isMobile)
         self.prev.Visible = false
         self.next.Visible = false
         self.info.Visible = false
+        if self.hintLabel then self.hintLabel.Visible = false end
     end
-    
-    if self.toggleUI then
-        self.toggleUI(self.enabled)
-    end
-    
+
+    if self.toggleUI then self.toggleUI(self.enabled) end
     return self.enabled
 end
 
@@ -625,18 +630,11 @@ function scripts.spectator:setup()
         if #self.list == 0 then
             self:stopSpec()
             self.enabled = false
-            if self.toggleUI then
-                self.toggleUI(false)
-            end
-            if self.prev then
-                self.prev.Visible = false
-            end
-            if self.next then
-                self.next.Visible = false
-            end
-            if self.info then
-                self.info.Visible = false
-            end
+            if self.toggleUI then self.toggleUI(false) end
+            if self.prev then self.prev.Visible = false end
+            if self.next then self.next.Visible = false end
+            if self.info then self.info.Visible = false end
+            if self.hintLabel then self.hintLabel.Visible = false end
         elseif self.list[self.idx] == nil then
             self.idx = 1
             if self:specPlayer(self.list[1]) then
@@ -663,7 +661,6 @@ function scripts.freecam:hideTitles()
                         obj.Enabled = false
                     end
                 end
-                
                 local humanoid = p.Character:FindFirstChildOfClass("Humanoid")
                 if humanoid then
                     self.hiddenTitles[humanoid] = humanoid.DisplayDistanceType
@@ -678,11 +675,8 @@ function scripts.freecam:showTitles()
     for obj, state in pairs(self.hiddenTitles) do
         pcall(function()
             if obj and obj.Parent then
-                if obj:IsA("BillboardGui") then
-                    obj.Enabled = state
-                elseif obj:IsA("Humanoid") then
-                    obj.DisplayDistanceType = state
-                end
+                if obj:IsA("BillboardGui") then obj.Enabled = state
+                elseif obj:IsA("Humanoid") then obj.DisplayDistanceType = state end
             end
         end)
     end
@@ -693,19 +687,13 @@ function scripts.freecam:hideGameUI()
     pcall(function()
         local e = StarterGui:GetCoreGuiEnabled(Enum.CoreGuiType.Health)
         self.coreE[Enum.CoreGuiType.Health] = e
-        if e then
-            StarterGui:SetCoreGuiEnabled(Enum.CoreGuiType.Health, false)
-        end
+        if e then StarterGui:SetCoreGuiEnabled(Enum.CoreGuiType.Health, false) end
     end)
-    
     pcall(function()
         local e = StarterGui:GetCoreGuiEnabled(Enum.CoreGuiType.Backpack)
         self.coreE[Enum.CoreGuiType.Backpack] = e
-        if e then
-            StarterGui:SetCoreGuiEnabled(Enum.CoreGuiType.Backpack, false)
-        end
+        if e then StarterGui:SetCoreGuiEnabled(Enum.CoreGuiType.Backpack, false) end
     end)
-    
     for _, g in pairs(PlayerGui:GetChildren()) do
         if g:IsA("ScreenGui") and g.Name ~= "AdvancedSettingsGui" and g.Name ~= "FreecamControlsGUI" then
             self.hiddenG[g] = g.Enabled
@@ -716,40 +704,28 @@ end
 
 function scripts.freecam:showGameUI()
     for g, e in pairs(self.coreE) do
-        pcall(function()
-            if e then
-                StarterGui:SetCoreGuiEnabled(g, true)
-            end
-        end)
+        pcall(function() if e then StarterGui:SetCoreGuiEnabled(g, true) end end)
     end
     self.coreE = {}
-    
     for g, e in pairs(self.hiddenG) do
-        pcall(function()
-            if g and g.Parent then
-                g.Enabled = e
-            end
-        end)
+        pcall(function() if g and g.Parent then g.Enabled = e end end)
     end
     self.hiddenG = {}
 end
 
 function scripts.freecam:showButtons()
     if not self.gui then return end
-    
     for _, child in pairs(self.gui:GetChildren()) do
         if child:IsA("TextButton") then
             TweenService:Create(child, TweenInfo.new(0.2), {BackgroundTransparency = 0.3}):Play()
             TweenService:Create(child, TweenInfo.new(0.2), {TextTransparency = 0}):Play()
         end
     end
-    
     self.lastInteraction = tick()
 end
 
 function scripts.freecam:hideButtons()
     if not self.gui then return end
-    
     for _, child in pairs(self.gui:GetChildren()) do
         if child:IsA("TextButton") then
             TweenService:Create(child, TweenInfo.new(0.3), {BackgroundTransparency = 1}):Play()
@@ -758,20 +734,21 @@ function scripts.freecam:hideButtons()
     end
 end
 
-function scripts.freecam:createUI(isMobile)
+function scripts.freecam:createUI(isMobile, isConsole)
     if self.gui then return end
-    
+
     local g = Instance.new("ScreenGui")
     g.Name = "FreecamControlsGUI"
     g.ResetOnSpawn = false
     g.DisplayOrder = 999999
     g.Parent = PlayerGui
-    
-    local btnWidth = isMobile and 40 or 50
-    local btnHeight = isMobile and 28 or 35
-    local fontSize = isMobile and 16 or 18
-    local spacing = 5
-    
+
+    -- PATCH: Ukuran tombol lebih besar di console
+    local btnWidth  = isConsole and 56 or (isMobile and 40 or 50)
+    local btnHeight = isConsole and 42 or (isMobile and 28 or 35)
+    local fontSize  = isConsole and 20 or (isMobile and 16 or 18)
+    local spacing   = isConsole and 8 or 5
+
     local function createBtn(txt, pos)
         local btn = Instance.new("TextButton")
         btn.Size = UDim2.new(0, btnWidth, 0, btnHeight)
@@ -784,40 +761,52 @@ function scripts.freecam:createUI(isMobile)
         btn.Font = Enum.Font.GothamBold
         btn.TextSize = fontSize
         btn.Parent = g
-        
         local corner = Instance.new("UICorner")
         corner.CornerRadius = UDim.new(0, 6)
         corner.Parent = btn
-        
         return btn
     end
-    
-    -- LEFT SIDE: Movement Controls (Cross layout)
-    local upBtn = createBtn("▲", UDim2.new(0, 10 + btnWidth + spacing, 1, -10 - btnHeight * 2 - spacing))
-    local leftBtn = createBtn("◄", UDim2.new(0, 10, 1, -10 - btnHeight))
-    local rightBtn = createBtn("►", UDim2.new(0, 10 + (btnWidth + spacing) * 2, 1, -10 - btnHeight))
-    local downBtn = createBtn("▼", UDim2.new(0, 10 + btnWidth + spacing, 1, -10 - btnHeight))
-    
-    -- RIGHT SIDE: Rotation and Zoom Controls (Cross layout)
-    local rotUpBtn = createBtn("UP", UDim2.new(1, -10 - btnWidth * 2 - spacing, 1, -10 - btnHeight * 2 - spacing))
-    local zoomOutBtn = createBtn("-", UDim2.new(1, -10 - btnWidth * 3 - spacing * 2, 1, -10 - btnHeight))
-    local zoomInBtn = createBtn("+", UDim2.new(1, -10 - btnWidth, 1, -10 - btnHeight))
-    local rotDownBtn = createBtn("DN", UDim2.new(1, -10 - btnWidth * 2 - spacing, 1, -10 - btnHeight))
-    
+
+    -- LEFT SIDE: Movement (Cross layout)
+    local upBtn    = createBtn("▲", UDim2.new(0, 10 + btnWidth + spacing, 1, -10 - btnHeight*2 - spacing))
+    local leftBtn  = createBtn("◄", UDim2.new(0, 10, 1, -10 - btnHeight))
+    local rightBtn = createBtn("►", UDim2.new(0, 10 + (btnWidth+spacing)*2, 1, -10 - btnHeight))
+    local downBtn  = createBtn("▼", UDim2.new(0, 10 + btnWidth + spacing, 1, -10 - btnHeight))
+
+    -- RIGHT SIDE: Rotation + Zoom
+    local rotUpBtn   = createBtn("UP", UDim2.new(1, -10 - btnWidth*2 - spacing, 1, -10 - btnHeight*2 - spacing))
+    local zoomOutBtn = createBtn("-",  UDim2.new(1, -10 - btnWidth*3 - spacing*2, 1, -10 - btnHeight))
+    local zoomInBtn  = createBtn("+",  UDim2.new(1, -10 - btnWidth, 1, -10 - btnHeight))
+    local rotDownBtn = createBtn("DN", UDim2.new(1, -10 - btnWidth*2 - spacing, 1, -10 - btnHeight))
+
+    -- PATCH: Console hint label di tengah atas
+    if isConsole then
+        local hintLabel = Instance.new("TextLabel")
+        hintLabel.Size = UDim2.new(0, 480, 0, 36)
+        hintLabel.Position = UDim2.new(0.5, -240, 0, 16)
+        hintLabel.BackgroundColor3 = Color3.new(0,0,0)
+        hintLabel.BackgroundTransparency = 0.4
+        hintLabel.BorderSizePixel = 0
+        hintLabel.Text = "🎮  L-Stick=Move  R-Stick=Rotate  DPad↑↓=Zoom  B=Exit"
+        hintLabel.TextColor3 = Color3.fromRGB(200, 200, 200)
+        hintLabel.Font = Enum.Font.Gotham
+        hintLabel.TextSize = 14
+        hintLabel.Parent = g
+        local hCorner = Instance.new("UICorner")
+        hCorner.CornerRadius = UDim.new(0, 8)
+        hCorner.Parent = hintLabel
+    end
+
     self.gui = g
-    
-    -- Setup button interactions
+
+    -- Button setup helper
     local function setupButton(btn, directionFunc)
         btn.MouseButton1Down:Connect(function()
             directionFunc(true)
             self:showButtons()
         end)
-        btn.MouseButton1Up:Connect(function()
-            directionFunc(false)
-        end)
-        btn.MouseLeave:Connect(function()
-            directionFunc(false)
-        end)
+        btn.MouseButton1Up:Connect(function() directionFunc(false) end)
+        btn.MouseLeave:Connect(function() directionFunc(false) end)
         btn.TouchTap:Connect(function()
             directionFunc(true)
             self:showButtons()
@@ -825,103 +814,119 @@ function scripts.freecam:createUI(isMobile)
             directionFunc(false)
         end)
     end
-    
-    -- Movement buttons
-    setupButton(upBtn, function(state) self.moveUp = state end)
-    setupButton(downBtn, function(state) self.moveDown = state end)
-    setupButton(leftBtn, function(state) self.moveLeft = state end)
-    setupButton(rightBtn, function(state) self.moveRight = state end)
-    
-    -- Rotation and Zoom buttons
-    setupButton(rotUpBtn, function(state) self.rotUp = state end)
-    setupButton(rotDownBtn, function(state) self.rotDown = state end)
-    setupButton(zoomInBtn, function(state) self.zoomIn = state end)
-    setupButton(zoomOutBtn, function(state) self.zoomOut = state end)
+
+    setupButton(upBtn,    function(s) self.moveUp    = s end)
+    setupButton(downBtn,  function(s) self.moveDown  = s end)
+    setupButton(leftBtn,  function(s) self.moveLeft  = s end)
+    setupButton(rightBtn, function(s) self.moveRight = s end)
+    setupButton(rotUpBtn,   function(s) self.rotUp   = s end)
+    setupButton(rotDownBtn, function(s) self.rotDown = s end)
+    setupButton(zoomInBtn,  function(s) self.zoomIn  = s end)
+    setupButton(zoomOutBtn, function(s) self.zoomOut = s end)
 end
 
-function scripts.freecam:toggle(isMobile)
+function scripts.freecam:toggle(isMobile, isConsole)
     self.enabled = not self.enabled
     self.isMobile = isMobile
-    
+    self.isConsole = isConsole or false
+
     if self.enabled then
         if _G.AdvancedSettings.menuOpen then
             _G.AdvancedSettings.toggleMenu()
         end
-        
-        self.origCFrame = self.cam.CFrame
+
+        self.origCFrame  = self.cam.CFrame
         self.origCamType = self.cam.CameraType
-        self.origCamSub = self.cam.CameraSubject
-        
+        self.origCamSub  = self.cam.CameraSubject
+
         self.cam.CameraType = Enum.CameraType.Scriptable
-        
+
         self:hideGameUI()
         self:hideTitles()
-        
-        if not self.gui then
-            self:createUI(isMobile)
-        end
-        
-        if self.gui then
-            self.gui.Enabled = true
-        end
-        
-        self.moveUp = false
-        self.moveDown = false
-        self.moveLeft = false
-        self.moveRight = false
-        self.rotUp = false
-        self.rotDown = false
-        self.zoomIn = false
-        self.zoomOut = false
+
+        if not self.gui then self:createUI(isMobile, isConsole) end
+        if self.gui then self.gui.Enabled = true end
+
+        -- Reset state flags
+        self.moveUp = false; self.moveDown = false
+        self.moveLeft = false; self.moveRight = false
+        self.rotUp = false; self.rotDown = false
+        self.zoomIn = false; self.zoomOut = false
+        self.leftStick = Vector2.zero
+        self.rightStick = Vector2.zero
         self.lastInteraction = tick()
-        
-        -- Auto-hide timer (3 seconds)
-        if self.hideTimer then
-            self.hideTimer:Disconnect()
-        end
+
+        -- Auto-hide timer
+        if self.hideTimer then self.hideTimer:Disconnect() end
         self.hideTimer = RunService.Heartbeat:Connect(function()
             if self.enabled and tick() - self.lastInteraction > 3 then
                 self:hideButtons()
             end
         end)
-        
-        -- Movement, rotation, and zoom loop
+
+        -- ════════════════════════════════
+        -- MAIN MOVEMENT LOOP
+        -- ════════════════════════════════
         table.insert(self.conns, RunService.RenderStepped:Connect(function(dt)
             if not self.enabled then return end
-            
+
             local moveDelta = Vector3.zero
-            
-            if self.moveUp then
-                moveDelta = moveDelta + Vector3.new(0, self.moveSpeed, 0)
+
+            -- PC/Mobile: button flags
+            if self.moveUp    then moveDelta = moveDelta + Vector3.new(0, self.moveSpeed, 0) end
+            if self.moveDown  then moveDelta = moveDelta - Vector3.new(0, self.moveSpeed, 0) end
+            if self.moveLeft  then moveDelta = moveDelta - (self.cam.CFrame.RightVector * self.moveSpeed) end
+            if self.moveRight then moveDelta = moveDelta + (self.cam.CFrame.RightVector * self.moveSpeed) end
+
+            -- PATCH: Console LeftThumbstick = gerak (strafe + maju/mundur)
+            if isConsole then
+                local ls = self.leftStick
+                if math.abs(ls.X) > 0.1 then
+                    moveDelta = moveDelta + (self.cam.CFrame.RightVector * ls.X * self.moveSpeed)
+                end
+                if math.abs(ls.Y) > 0.1 then
+                    moveDelta = moveDelta + (self.cam.CFrame.LookVector * ls.Y * self.moveSpeed)
+                end
             end
-            if self.moveDown then
-                moveDelta = moveDelta - Vector3.new(0, self.moveSpeed, 0)
-            end
-            if self.moveLeft then
-                moveDelta = moveDelta - (self.cam.CFrame.RightVector * self.moveSpeed)
-            end
-            if self.moveRight then
-                moveDelta = moveDelta + (self.cam.CFrame.RightVector * self.moveSpeed)
-            end
-            
+
             if moveDelta.Magnitude > 0 then
                 self.cam.CFrame = self.cam.CFrame + moveDelta
                 self.cam.Focus = self.cam.CFrame
             end
-            
-            -- Rotation
+
+            -- Rotation (PC/Mobile buttons)
             if self.rotUp then
-                local rotX = CFrame.Angles(self.rotSpeed, 0, 0)
-                self.cam.CFrame = self.cam.CFrame * rotX
+                self.cam.CFrame = self.cam.CFrame * CFrame.Angles(self.rotSpeed, 0, 0)
                 self.cam.Focus = self.cam.CFrame
             end
             if self.rotDown then
-                local rotX = CFrame.Angles(-self.rotSpeed, 0, 0)
-                self.cam.CFrame = self.cam.CFrame * rotX
+                self.cam.CFrame = self.cam.CFrame * CFrame.Angles(-self.rotSpeed, 0, 0)
                 self.cam.Focus = self.cam.CFrame
             end
-            
-            -- Zoom
+
+            -- PATCH: Console RightThumbstick = rotasi kamera
+            if isConsole then
+                local rs = self.rightStick
+                if math.abs(rs.X) > 0.1 or math.abs(rs.Y) > 0.1 then
+                    -- Yaw (kiri/kanan) = world Y axis
+                    -- Pitch (atas/bawah) = local X axis
+                    local yaw   = -rs.X * self.rotSpeed
+                    local pitch =  rs.Y * self.rotSpeed
+                    self.cam.CFrame = self.cam.CFrame
+                        * CFrame.Angles(pitch, 0, 0)
+                    self.cam.CFrame = CFrame.new(self.cam.CFrame.Position)
+                        * CFrame.Angles(0, yaw, 0)
+                        * CFrame.Angles(pitch, 0, 0)
+                        * CFrame.new(0, 0, 0)
+
+                    -- Simpler but effective rotation
+                    self.cam.CFrame = self.cam.CFrame
+                        * CFrame.Angles(pitch, yaw, 0)
+                    self.cam.Focus = self.cam.CFrame
+                end
+            end
+
+            -- Zoom (PC/Mobile buttons + console DPad)
             if self.zoomIn then
                 self.cam.CFrame = self.cam.CFrame + (self.cam.CFrame.LookVector * self.zoomSpeed)
                 self.cam.Focus = self.cam.CFrame
@@ -931,59 +936,153 @@ function scripts.freecam:toggle(isMobile)
                 self.cam.Focus = self.cam.CFrame
             end
         end))
-        
-        -- Mouse wheel zoom for PC only
-        if not isMobile then
+
+        -- PC Mouse: drag to rotate + scroll to zoom
+        if not isMobile and not isConsole then
+            local mouseDown = false
+            local lastMousePos = nil
+
+            table.insert(self.conns, UserInputService.InputBegan:Connect(function(input, gpe)
+                if not self.enabled then return end
+                if input.UserInputType == Enum.UserInputType.MouseButton2 then
+                    mouseDown = true
+                    lastMousePos = UserInputService:GetMouseLocation()
+                end
+            end))
+
+            table.insert(self.conns, UserInputService.InputEnded:Connect(function(input)
+                if input.UserInputType == Enum.UserInputType.MouseButton2 then
+                    mouseDown = false
+                    lastMousePos = nil
+                end
+            end))
+
             table.insert(self.conns, UserInputService.InputChanged:Connect(function(input, gpe)
                 if not self.enabled then return end
-                
                 if input.UserInputType == Enum.UserInputType.MouseWheel then
-                    local zoomAmount = input.Position.Z * 3
+                    local zoomAmount = input.Position.Z * self.zoomSpeed
                     self.cam.CFrame = self.cam.CFrame + (self.cam.CFrame.LookVector * zoomAmount)
                     self.cam.Focus = self.cam.CFrame
                     self:showButtons()
                 end
+                if mouseDown and input.UserInputType == Enum.UserInputType.MouseMovement then
+                    local currentPos = UserInputService:GetMouseLocation()
+                    if lastMousePos then
+                        local delta = currentPos - lastMousePos
+                        local yaw   = -delta.X * 0.003
+                        local pitch = -delta.Y * 0.003
+                        self.cam.CFrame = CFrame.new(self.cam.CFrame.Position)
+                            * CFrame.Angles(0, yaw, 0)
+                            * CFrame.Angles(pitch, 0, 0)
+                        self.cam.Focus = self.cam.CFrame
+                    end
+                    lastMousePos = currentPos
+                end
             end))
         end
-        
-        -- Show buttons on any touch
+
+        -- PATCH: Console thumbstick input via InputChanged
+        if isConsole then
+            table.insert(self.conns, UserInputService.InputChanged:Connect(function(input)
+                if not self.enabled then return end
+                if input.UserInputType == Enum.UserInputType.Gamepad1 then
+                    if input.KeyCode == Enum.KeyCode.Thumbstick1 then
+                        self.leftStick = Vector2.new(input.Position.X, input.Position.Y)
+                        self:showButtons()
+                    elseif input.KeyCode == Enum.KeyCode.Thumbstick2 then
+                        self.rightStick = Vector2.new(input.Position.X, input.Position.Y)
+                        self:showButtons()
+                    end
+                end
+            end))
+
+            -- PATCH: Console DPad Up/Down = zoom, B = exit freecam
+            table.insert(self.conns, UserInputService.InputBegan:Connect(function(input, gp)
+                if gp then return end
+                if not self.enabled then return end
+                if input.KeyCode == Enum.KeyCode.DPadUp then
+                    self.zoomIn = true
+                elseif input.KeyCode == Enum.KeyCode.DPadDown then
+                    self.zoomOut = true
+                elseif input.KeyCode == Enum.KeyCode.ButtonB then
+                    -- B = exit freecam
+                    self:toggle(isMobile, isConsole)
+                end
+            end))
+
+            table.insert(self.conns, UserInputService.InputEnded:Connect(function(input)
+                if not self.enabled then return end
+                if input.KeyCode == Enum.KeyCode.DPadUp then
+                    self.zoomIn = false
+                elseif input.KeyCode == Enum.KeyCode.DPadDown then
+                    self.zoomOut = false
+                end
+            end))
+        end
+
+        -- Mobile touch show buttons
         table.insert(self.conns, UserInputService.TouchStarted:Connect(function(touch, gpe)
-            if self.enabled then
-                self:showButtons()
-            end
+            if self.enabled then self:showButtons() end
         end))
-        
+
+        -- PC keyboard movement (WASD + QE)
+        if not isMobile and not isConsole then
+            table.insert(self.conns, RunService.RenderStepped:Connect(function()
+                if not self.enabled then return end
+                self.moveForward  = UserInputService:IsKeyDown(Enum.KeyCode.W)
+                self.moveBackward = UserInputService:IsKeyDown(Enum.KeyCode.S)
+                self.moveLeft2    = UserInputService:IsKeyDown(Enum.KeyCode.A)
+                self.moveRight2   = UserInputService:IsKeyDown(Enum.KeyCode.D)
+                local upKey       = UserInputService:IsKeyDown(Enum.KeyCode.E)
+                local downKey     = UserInputService:IsKeyDown(Enum.KeyCode.Q)
+                local speed = UserInputService:IsKeyDown(Enum.KeyCode.LeftShift) and self.moveSpeed * 3 or self.moveSpeed
+
+                local delta = Vector3.zero
+                if self.moveForward  then delta = delta + self.cam.CFrame.LookVector * speed end
+                if self.moveBackward then delta = delta - self.cam.CFrame.LookVector * speed end
+                if self.moveLeft2    then delta = delta - self.cam.CFrame.RightVector * speed end
+                if self.moveRight2   then delta = delta + self.cam.CFrame.RightVector * speed end
+                if upKey   then delta = delta + Vector3.new(0, speed, 0) end
+                if downKey then delta = delta - Vector3.new(0, speed, 0) end
+
+                if delta.Magnitude > 0 then
+                    self.cam.CFrame = self.cam.CFrame + delta
+                    self.cam.Focus = self.cam.CFrame
+                end
+            end))
+        end
+
     else
+        -- DISABLE FREECAM
         if self.hideTimer then
             self.hideTimer:Disconnect()
             self.hideTimer = nil
         end
-        
         for _, conn in ipairs(self.conns) do
             pcall(function() conn:Disconnect() end)
         end
         self.conns = {}
-        
+
+        -- Reset thumbstick state
+        self.leftStick = Vector2.zero
+        self.rightStick = Vector2.zero
+        self.zoomIn = false
+        self.zoomOut = false
+
         self.cam.CameraType = self.origCamType or Enum.CameraType.Custom
         self.cam.CameraSubject = self.origCamSub
-        
-        if self.gui then
-            self.gui.Enabled = false
-        end
-        
+
+        if self.gui then self.gui.Enabled = false end
         self:showGameUI()
         self:showTitles()
     end
-    
-    if self.toggleUI then
-        self.toggleUI(self.enabled)
-    end
-    
+
+    if self.toggleUI then self.toggleUI(self.enabled) end
     return self.enabled
 end
 
 function scripts.freecam:setup()
-    -- Setup selesai
+    -- noop
 end
 
 -- ═══════════════════════════════════════════════
@@ -1001,14 +1100,9 @@ local function resetToBase()
     if not character or not character:FindFirstChild("HumanoidRootPart") then
         return false, "Character not found!"
     end
-    
-    pcall(function()
-        resetEvent:FireServer("ResetCheckpoint")
-    end)
-    
+    pcall(function() resetEvent:FireServer("ResetCheckpoint") end)
     local basecamp = workspace:FindFirstChild("Basecamp") or workspace:FindFirstChild("SpawnLocation")
     local hrp = character.HumanoidRootPart
-    
     if basecamp then
         local spawnPart = basecamp:IsA("BasePart") and basecamp or basecamp:FindFirstChildWhichIsA("BasePart", true)
         if spawnPart then
@@ -1017,59 +1111,63 @@ local function resetToBase()
     else
         character:MoveTo(Vector3.new(0, 50, 0))
     end
-    
     if hrp then
         hrp.AssemblyLinearVelocity = Vector3.zero
         hrp.AssemblyAngularVelocity = Vector3.zero
     end
-    
     local humanoid = character:FindFirstChildOfClass("Humanoid")
-    if humanoid then
-        humanoid.Health = humanoid.MaxHealth
-    end
-    
+    if humanoid then humanoid.Health = humanoid.MaxHealth end
     return true, "Reset successful!"
 end
 
 -- ═══════════════════════════════════════════════
--- UI CREATION WITH ANTI OVER-SCROLL
+-- UI CREATION
 -- ═══════════════════════════════════════════════
 
 function GameplayTab.createContent(contentScroll, colors, isMobile, utils)
+    -- PATCH: ambil isConsole dari global
+    local isConsole = _G.AdvancedSettings and _G.AdvancedSettings.isConsole or false
+
     contentScroll.ScrollingDirection = Enum.ScrollingDirection.Y
     contentScroll.ElasticBehavior = Enum.ElasticBehavior.Never
-    
+
     contentScroll:GetPropertyChangedSignal("CanvasPosition"):Connect(function()
         if contentScroll.CanvasPosition.X ~= 0 then
             contentScroll.CanvasPosition = Vector2.new(0, contentScroll.CanvasPosition.Y)
         end
-        
         local maxScroll = contentScroll.CanvasSize.Y.Offset - contentScroll.AbsoluteSize.Y
-        
         if maxScroll <= 0 then
             contentScroll.CanvasPosition = Vector2.new(0, 0)
             return
         end
-        
         if contentScroll.CanvasPosition.Y < 0 then
             contentScroll.CanvasPosition = Vector2.new(0, 0)
         elseif contentScroll.CanvasPosition.Y > maxScroll then
             contentScroll.CanvasPosition = Vector2.new(0, maxScroll)
         end
     end)
-    
+
+    local cardHeight = isConsole and 64 or (isMobile and 38 or 50)
+    local titleSz    = isConsole and 16 or (isMobile and 10 or 13)
+    local descSz     = isConsole and 13 or (isMobile and 8 or 11)
+    local leftPad    = isConsole and 20 or (isMobile and 8 or 15)
+    local knobSz     = isConsole and 20 or (isMobile and 12 or 16)
+    local toggleW    = isConsole and 46 or (isMobile and 32 or 38)
+    local toggleH    = isConsole and 24 or (isMobile and 16 or 20)
+    local rightPad   = isConsole and 20 or (isMobile and 10 or 14)
+
     local features = {
-        {id = "hideTitle", name = "Hide Title", desc = "Hide all player nametags", type = "toggle"},
-        {id = "hidePlayers", name = "Hide Players", desc = "Make all players invisible", type = "toggle"},
-        {id = "hideUI", name = "Hide All UI", desc = "Hide Health, Backpack & Titles", type = "toggle"},
-        {id = "spectator", name = "Spectator Mode", desc = "Watch other players", type = "toggle", needsIsMobile = true},
-        {id = "freecam", name = "Freecam Mode", desc = "Free camera movement", type = "toggle", needsIsMobile = true},
-        {id = "resetBase", name = "Reset to Base", desc = "Teleport to Basecamp", type = "action"}
+        {id = "hideTitle",   name = "Hide Title",    desc = "Hide all player nametags",       type = "toggle"},
+        {id = "hidePlayers", name = "Hide Players",  desc = "Make all players invisible",     type = "toggle"},
+        {id = "hideUI",      name = "Hide All UI",   desc = "Hide Health, Backpack & Titles", type = "toggle"},
+        {id = "spectator",   name = "Spectator Mode",desc = "Watch other players",            type = "toggle", needsPlatform = true},
+        {id = "freecam",     name = "Freecam Mode",  desc = isConsole and "L-Stick=Move  R-Stick=Rotate  B=Exit" or "Free camera movement", type = "toggle", needsPlatform = true},
+        {id = "resetBase",   name = "Reset to Base", desc = "Teleport to Basecamp",           type = "action"}
     }
-    
+
     for order, feature in ipairs(features) do
         local card = Instance.new("Frame")
-        card.Size = UDim2.new(1,-4,0,isMobile and 38 or 50)
+        card.Size = UDim2.new(1, -4, 0, cardHeight)
         card.BackgroundColor3 = colors.card
         card.BackgroundTransparency = 0.5
         card.BorderSizePixel = 0
@@ -1077,158 +1175,173 @@ function GameplayTab.createContent(contentScroll, colors, isMobile, utils)
         card.LayoutOrder = order
         card.Parent = contentScroll
         utils.corner(card, 10)
-        
+
         local stroke = Instance.new("UIStroke")
         stroke.Color = colors.divider
         stroke.Thickness = 1
         stroke.Transparency = 0.6
         stroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
         stroke.Parent = card
-        
+
         local textContainer = Instance.new("Frame")
-        textContainer.Size = UDim2.new(1, feature.type == "action" and -80 or -70, 1, 0)
-        textContainer.Position = UDim2.new(0,isMobile and 8 or 15,0,0)
+        textContainer.Size = UDim2.new(1, feature.type == "action" and -90 or -80, 1, 0)
+        textContainer.Position = UDim2.new(0, leftPad, 0, 0)
         textContainer.BackgroundTransparency = 1
         textContainer.ZIndex = 203
         textContainer.Parent = card
-        
+
         local titleLabel = Instance.new("TextLabel")
-        titleLabel.Size = UDim2.new(1,0,0,isMobile and 16 or 20)
-        titleLabel.Position = UDim2.new(0,0,0,isMobile and 4 or 8)
+        titleLabel.Size = UDim2.new(1, 0, 0, isConsole and 26 or (isMobile and 16 or 20))
+        titleLabel.Position = UDim2.new(0, 0, 0, isConsole and 10 or (isMobile and 4 or 8))
         titleLabel.BackgroundTransparency = 1
         titleLabel.Text = feature.name
         titleLabel.TextColor3 = colors.text
         titleLabel.Font = Enum.Font.GothamBold
-        titleLabel.TextSize = isMobile and 10 or 13
+        titleLabel.TextSize = titleSz
         titleLabel.TextXAlignment = Enum.TextXAlignment.Left
         titleLabel.ZIndex = 204
         titleLabel.Parent = textContainer
-        
+
         local descLabel = Instance.new("TextLabel")
-        descLabel.Size = UDim2.new(1,0,0,isMobile and 12 or 16)
-        descLabel.Position = UDim2.new(0,0,0,isMobile and 20 or 28)
+        descLabel.Size = UDim2.new(1, 0, 0, isConsole and 20 or (isMobile and 12 or 16))
+        descLabel.Position = UDim2.new(0, 0, 0, isConsole and 36 or (isMobile and 20 or 28))
         descLabel.BackgroundTransparency = 1
         descLabel.Text = feature.desc
         descLabel.TextColor3 = colors.textDark
         descLabel.Font = Enum.Font.Gotham
-        descLabel.TextSize = isMobile and 8 or 11
+        descLabel.TextSize = descSz
         descLabel.TextXAlignment = Enum.TextXAlignment.Left
         descLabel.ZIndex = 204
         descLabel.Parent = textContainer
-        
+
         if feature.type == "toggle" then
             local toggleBg = Instance.new("Frame")
-            toggleBg.Size = UDim2.new(0,isMobile and 32 or 38,0,isMobile and 16 or 20)
-            toggleBg.Position = UDim2.new(1,isMobile and -36 or -50,0.5,isMobile and -8 or -10)
+            toggleBg.Size = UDim2.new(0, toggleW, 0, toggleH)
+            toggleBg.Position = UDim2.new(1, -(rightPad + toggleW), 0.5, -toggleH/2)
             toggleBg.BackgroundColor3 = colors.toggleOff
             toggleBg.BorderSizePixel = 0
             toggleBg.ZIndex = 203
             toggleBg.Parent = card
-            utils.corner(toggleBg, 10)
-            
+            utils.corner(toggleBg, toggleH/2)
+
             local toggleStroke = Instance.new("UIStroke")
             toggleStroke.Color = colors.divider
             toggleStroke.Thickness = 1
             toggleStroke.Transparency = 0.7
             toggleStroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
             toggleStroke.Parent = toggleBg
-            
+
             local toggleKnob = Instance.new("Frame")
-            toggleKnob.Size = UDim2.new(0,isMobile and 12 or 16,0,isMobile and 12 or 16)
-            toggleKnob.Position = UDim2.new(0,2,0.5,isMobile and -6 or -8)
+            toggleKnob.Size = UDim2.new(0, knobSz, 0, knobSz)
+            toggleKnob.Position = UDim2.new(0, 2, 0.5, -knobSz/2)
             toggleKnob.BackgroundColor3 = colors.text
             toggleKnob.BorderSizePixel = 0
             toggleKnob.ZIndex = 204
             toggleKnob.Parent = toggleBg
-            utils.corner(toggleKnob, 8)
-            
+            utils.corner(toggleKnob, knobSz/2)
+
             local s = scripts[feature.id]
-            
+
             if s and s.enabled then
                 toggleBg.BackgroundColor3 = colors.toggleOn
                 toggleStroke.Color = colors.accent
                 toggleStroke.Transparency = 0
-                toggleKnob.Position = UDim2.new(1,isMobile and -14 or -18,0.5,isMobile and -6 or -8)
+                toggleKnob.Position = UDim2.new(1, -(knobSz+2), 0.5, -knobSz/2)
             end
-            
+
             if s then
                 s.toggleUI = function(enabled)
                     if enabled then
                         utils.tween(toggleBg, TweenInfo.new(0.2), {BackgroundColor3 = colors.toggleOn})
                         utils.tween(toggleStroke, TweenInfo.new(0.2), {Color = colors.accent, Transparency = 0})
-                        utils.tween(toggleKnob, TweenInfo.new(0.2), {Position = UDim2.new(1,isMobile and -14 or -18,0.5,isMobile and -6 or -8)})
+                        utils.tween(toggleKnob, TweenInfo.new(0.2), {Position = UDim2.new(1, -(knobSz+2), 0.5, -knobSz/2)})
                     else
                         utils.tween(toggleBg, TweenInfo.new(0.2), {BackgroundColor3 = colors.toggleOff})
                         utils.tween(toggleStroke, TweenInfo.new(0.2), {Color = colors.divider, Transparency = 0.7})
-                        utils.tween(toggleKnob, TweenInfo.new(0.2), {Position = UDim2.new(0,2,0.5,isMobile and -6 or -8)})
+                        utils.tween(toggleKnob, TweenInfo.new(0.2), {Position = UDim2.new(0, 2, 0.5, -knobSz/2)})
                     end
                 end
             end
-            
+
             local toggleBtn = Instance.new("TextButton")
-            toggleBtn.Size = UDim2.new(1,0,1,0)
+            toggleBtn.Size = UDim2.new(1, 0, 1, 0)
             toggleBtn.BackgroundTransparency = 1
             toggleBtn.Text = ""
             toggleBtn.ZIndex = 205
+            toggleBtn.Selectable = isConsole
             toggleBtn.Parent = toggleBg
-            
-            toggleBtn.MouseButton1Click:Connect(function()
+
+            local function onToggle()
                 if s then
-                    if feature.needsIsMobile then
-                        s:toggle(isMobile)
+                    if feature.needsPlatform then
+                        -- PATCH: pass isMobile dan isConsole
+                        s:toggle(isMobile, isConsole)
                     else
                         s:toggle()
                     end
                 end
-            end)
-            
+            end
+
+            toggleBtn.MouseButton1Click:Connect(onToggle)
+            toggleBtn.Activated:Connect(onToggle)  -- PATCH: Gamepad ButtonA
+
         elseif feature.type == "action" then
+            local actW = isConsole and 90 or (isMobile and 65 or 70)
+            local actH = isConsole and 36 or (isMobile and 26 or 28)
+
             local actionBtn = Instance.new("TextButton")
-            actionBtn.Size = UDim2.new(0, isMobile and 65 or 70, 0, isMobile and 26 or 28)
-            actionBtn.Position = UDim2.new(1, isMobile and -72 or -80, 0.5, isMobile and -13 or -14)
+            actionBtn.Size = UDim2.new(0, actW, 0, actH)
+            actionBtn.Position = UDim2.new(1, -(rightPad + actW), 0.5, -actH/2)
             actionBtn.BackgroundColor3 = colors.accent
             actionBtn.BorderSizePixel = 0
             actionBtn.Text = ""
             actionBtn.AutoButtonColor = false
             actionBtn.ZIndex = 203
+            actionBtn.Selectable = isConsole
             actionBtn.Parent = card
             utils.corner(actionBtn, 6)
-            
+
             local actionLabel = Instance.new("TextLabel")
             actionLabel.Size = UDim2.new(1, 0, 1, 0)
             actionLabel.BackgroundTransparency = 1
             actionLabel.Text = "Execute"
             actionLabel.TextColor3 = colors.bg
             actionLabel.Font = Enum.Font.GothamBold
-            actionLabel.TextSize = isMobile and 9 or 11
+            actionLabel.TextSize = isConsole and 14 or (isMobile and 9 or 11)
             actionLabel.ZIndex = 204
             actionLabel.Parent = actionBtn
-            
-            actionBtn.MouseButton1Click:Connect(function()
+
+            local function onExecute()
                 if _G.AdvancedSettings.menuOpen then
                     _G.AdvancedSettings.toggleMenu()
                 end
-                
                 local success, message = resetToBase()
                 print(message)
+            end
+
+            actionBtn.MouseButton1Click:Connect(onExecute)
+            actionBtn.Activated:Connect(onExecute)  -- PATCH: Gamepad ButtonA
+
+            -- PATCH: Hover hanya untuk PC/Mobile
+            if not isConsole then
+                actionBtn.MouseEnter:Connect(function()
+                    utils.tween(actionBtn, TweenInfo.new(0.15), {BackgroundColor3 = Color3.fromRGB(255, 220, 130)})
+                end)
+                actionBtn.MouseLeave:Connect(function()
+                    utils.tween(actionBtn, TweenInfo.new(0.15), {BackgroundColor3 = colors.accent})
+                end)
+            end
+        end
+
+        -- PATCH: Hover hanya untuk PC/Mobile
+        if not isConsole then
+            card.MouseEnter:Connect(function()
+                utils.tween(card, TweenInfo.new(0.15), {BackgroundTransparency = 0.3})
             end)
-            
-            actionBtn.MouseEnter:Connect(function()
-                utils.tween(actionBtn, TweenInfo.new(0.15), {BackgroundColor3 = Color3.fromRGB(255, 220, 130)})
-            end)
-            
-            actionBtn.MouseLeave:Connect(function()
-                utils.tween(actionBtn, TweenInfo.new(0.15), {BackgroundColor3 = colors.accent})
+            card.MouseLeave:Connect(function()
+                utils.tween(card, TweenInfo.new(0.15), {BackgroundTransparency = 0.5})
             end)
         end
-        
-        card.MouseEnter:Connect(function()
-            utils.tween(card, TweenInfo.new(0.15), {BackgroundTransparency = 0.3})
-        end)
-        
-        card.MouseLeave:Connect(function()
-            utils.tween(card, TweenInfo.new(0.15), {BackgroundTransparency = 0.5})
-        end)
     end
 end
 
@@ -1246,35 +1359,24 @@ function GameplayTab.setup()
 end
 
 function GameplayTab.cleanup()
-    for _, script in pairs(scripts) do
-        if script.conns then
-            for _, conn in ipairs(script.conns) do
+    for _, s in pairs(scripts) do
+        if s.conns then
+            for _, conn in ipairs(s.conns) do
                 pcall(function() conn:Disconnect() end)
             end
         end
-        if script.titleMonitor then
-            script.titleMonitor:Disconnect()
-            script.titleMonitor = nil
-        end
-        if script.hideTimer then
-            script.hideTimer:Disconnect()
-            script.hideTimer = nil
-        end
-        
-        if script.isSpec then
-            script:stopSpec()
-        end
-        if script.gui then
-            script.gui:Destroy()
-            script.gui = nil
-        end
-        
-        if script.enabled then
-            if script.id == "spectator" or script.id == "freecam" then
-                script:toggle(false)
-            else
-                script:toggle()
-            end
+        if s.titleMonitor then s.titleMonitor:Disconnect(); s.titleMonitor = nil end
+        if s.hideTimer then s.hideTimer:Disconnect(); s.hideTimer = nil end
+        if s.isSpec then pcall(function() s:stopSpec() end) end
+        if s.gui then s.gui:Destroy(); s.gui = nil end
+        if s.enabled then
+            pcall(function()
+                if s == scripts.spectator or s == scripts.freecam then
+                    s:toggle(false, false)
+                else
+                    s:toggle()
+                end
+            end)
         end
     end
     print("🧹 Gameplay Tab: Cleanup complete")
