@@ -1,1056 +1,643 @@
 --[[
     ═══════════════════════════════════════════════
-    MUSIC TAB — CONSOLE PATCH SUMMARY
-    ═══════════════════════════════════════════════
-    PATCH NOTES:
-    1. debugPrint infinite recursion BUG FIXED → print(...)
-    2. Semua MouseButton1Click + Activated (ButtonA gamepad)
-    3. MouseEnter/MouseLeave dihilangkan di console
-    4. "Add Custom Song" TextBox di-disable di console
-       (console tidak punya keyboard fisik)
-    5. Kontrol musik di console: A=Play/Pause, LB=Prev, RB=Next
-    6. UI text lebih besar di console
+    SFX TAB
     ═══════════════════════════════════════════════
     Author: ItoRenz00
-    Place in: StarterPlayer > StarterPlayerScripts > AdvancedSettings > Tabs > MusicTab
+    Place in: StarterPlayer > StarterPlayerScripts > AdvancedSettings > Tabs > SFXTab
     Type: ModuleScript
+    ═══════════════════════════════════════════════
+    PATCH: Console Support Added
+    - Semua toggle pakai Activated (support ButtonA gamepad)
+    - MouseEnter/MouseLeave dihilangkan di console
+    - Character di-cache dengan aman (pakai CharacterAdded jika belum ada)
+    - UI lebih besar di console
+    ═══════════════════════════════════════════════
 ]]
 
-local SoundService = game:GetService("SoundService")
-local RunService = game:GetService("RunService")
-local Players = game:GetService("Players")
-local ReplicatedStorage = game:GetService("ReplicatedStorage")
-local TweenService = game:GetService("TweenService")
-local UserInputService = game:GetService("UserInputService")
-
-local LocalPlayer = Players.LocalPlayer
-local MusicTab = {}
-
--- DEBUG MODE
-local DEBUG_MODE = false
-
--- PATCH: Fix infinite recursion bug di debugPrint
-local function debugPrint(...)
-    if DEBUG_MODE then
-        print(...)  -- FIX: bukan debugPrint() lagi
-    end
-end
-
-local function debugWarn(...)
-    if DEBUG_MODE then
-        warn(...)   -- FIX: bukan debugWarn() lagi
-    end
-end
-
-local ICONS = {
-    PLAY = "▶", PAUSE = "||", PREV = "<<", NEXT = ">>",
-    SHUFFLE = "⇄", LOOP_ALL = "∞", LOOP_ONE = "1",
-    FAVORITE = "★", FAVORITE_EMPTY = "☆",
-    DELETE = "×", ADD = "+", CLOSE = "×",
-    MUSIC = "♪", PLAYLIST = "≡", HEART = "♥", CHECK = "✓"
-}
-
-local function hashString(str)
-    local hash = 5381
-    for i = 1, #str do
-        local byte = string.byte(str, i)
-        hash = ((hash * 33) + byte) % 2147483647
-    end
-    return hash
-end
-
-local function generateColorFromString(str)
-    local hash = hashString(str)
-    local hue = (hash % 360) / 360
-    local saturation = 0.6 + ((hash / 360) % 100) / 250
-    local value = 0.7 + ((hash / 36000) % 100) / 333
-
-    local function hsvToRgb(h, s, v)
-        local c = v * s
-        local x = c * (1 - math.abs((h * 6) % 2 - 1))
-        local m = v - c
-        local r, g, b = 0, 0, 0
-        if h < 1/6 then r,g,b = c,x,0
-        elseif h < 2/6 then r,g,b = x,c,0
-        elseif h < 3/6 then r,g,b = 0,c,x
-        elseif h < 4/6 then r,g,b = 0,x,c
-        elseif h < 5/6 then r,g,b = x,0,c
-        else r,g,b = c,0,x end
-        return r+m, g+m, b+m
-    end
-
-    local r, g, b = hsvToRgb(hue, saturation, value)
-    return Color3.new(r, g, b)
-end
+local SFXTab = {}
 
 -- ═══════════════════════════════════════════════
--- MUSIC PLAYER STATE
+-- SOUND IDS
 -- ═══════════════════════════════════════════════
-local MusicPlayer = {
-    sound = nil,
-    defaultPlaylist = {
-        {id = "rbxassetid://118538313029983", title = "Where We Are",            favorite = false},
-        {id = "rbxassetid://129988226070628", title = "DJ Nasty Girl",            favorite = false},
-        {id = "rbxassetid://89610760702249",  title = "Stereo Love",              favorite = false},
-        {id = "rbxassetid://118390472006859", title = "DJ Party Shaker",          favorite = false},
-        {id = "rbxassetid://90145710334449",  title = "DJ World",                 favorite = false},
-        {id = "rbxassetid://89180400948567",  title = "Phonk Toma",               favorite = false},
-        {id = "rbxassetid://116239599730544", title = "Goat",                     favorite = false},
-        {id = "rbxassetid://135018311294635", title = "DJ Cinnamon",              favorite = false},
-        {id = "rbxassetid://86271123924168",  title = "Braziliant Phonk",         favorite = false},
-        {id = "rbxassetid://70372515152488",  title = "Glow of The Season",       favorite = false},
-        {id = "rbxassetid://103668688012699", title = "Epic Electronic Journey",  favorite = false},
-        {id = "rbxassetid://1844008189",      title = "DJ Turn The Music Up",     favorite = false},
-        {id = "rbxassetid://110431264669747", title = "Italian Disco Night",      favorite = false},
-        {id = "rbxassetid://70610714752993",  title = "Better of Alone",          favorite = false},
-        {id = "rbxassetid://90456869588958",  title = "Call You Mine",            favorite = false},
-        {id = "rbxassetid://92725537953268",  title = "Hotel Lobby",              favorite = false},
-        {id = "rbxassetid://71335033796488",  title = "Thought of You",           favorite = false},
-        {id = "rbxassetid://90097019879904",  title = "Slam The Night",           favorite = false},
-        {id = "rbxassetid://133857865643061", title = "Indonesia to Australia",   favorite = false},
-        {id = "rbxassetid://96077163288111",  title = "Kita Usahakan Lagi",       favorite = false},
-        {id = "rbxassetid://77533933904801",  title = "Coba Coba",                favorite = false},
-        {id = "rbxassetid://104207837699519", title = "Tabola bale",              favorite = false},
-        {id = "rbxassetid://119254319180287", title = "Culik Aku Dong",           favorite = false},
-        {id = "rbxassetid://116255319981650", title = "Jamilah aisyah",           favorite = false},
-        {id = "rbxassetid://133361466559971", title = "Dame Um Grrr",             favorite = false},
-        {id = "rbxassetid://80223079206027",  title = "Kecewa",                   favorite = false}
-    },
-    playlist = {},
-    customSongs = {},
-    playlists = {},
-    favorites = {},
-    state = {
-        currentIndex = 1,
-        isPlaying = false,
-        loopMode = "all",
-        volume = 5,
-        shuffle = false,
-        showPlaylist = false,
-        showFavorites = false,
-        showAddDialog = false,
-        isLoading = false,
-        hasAutoPlayed = false,
-        dataLoaded = false,
-        isFirstJoin = true
-    },
-    ui = {},
-    uiCreated = false,
-    updateLoop = nil,
-    autoSaveLoop = nil,
-    characterConn = nil,
-    remoteEvent = nil,
-    initialized = false
-}
+local UNYAH_JUMP_ID    = "rbxassetid://115680913237541"
+local MARIO_JUMP_ID    = "rbxassetid://6678636911"
+local EIGHTBIT_JUMP_ID = "rbxassetid://271111328"
+
+local CITCIT_WALK_ID   = "rbxassetid://9125994773"
+local SQUIDWARD_WALK_ID= "rbxassetid://6929242058"
+local SPONGEBOB_WALK_ID= "rbxassetid://5948749731"
+local MRKRAB_WALK_ID   = "rbxassetid://3426632334"
 
 -- ═══════════════════════════════════════════════
--- CORE MUSIC FUNCTIONS
+-- STATE VARIABLES
 -- ═══════════════════════════════════════════════
-function MusicPlayer:getCurrentSong()
-    if #self.playlist == 0 then return nil end
-    return self.playlist[self.state.currentIndex]
+local player = game.Players.LocalPlayer
+
+-- PATCH: Cara aman cache character — tidak block jika belum spawn
+local character = player.Character
+local humanoid = nil
+local rootPart = nil
+
+if character then
+    humanoid = character:FindFirstChildOfClass("Humanoid")
+    rootPart = character:FindFirstChild("HumanoidRootPart")
 end
 
-function MusicPlayer:loadSound()
-    if not self.sound then
-        self.sound = Instance.new("Sound")
-        self.sound.Name = "MusicPlayerSound"
-        self.sound.Parent = SoundService
-        self.sound.Looped = false
-        self.sound.Volume = self.state.volume / 10
+local jumpSound = nil
+local walkSound = nil
+local defaultJumpSound = nil
+local defaultFootstepSound = nil
 
-        self.sound.Ended:Connect(function()
-            if self.state.isPlaying then
-                self:nextSong()
+local jumpEnabled = true
+local walkEnabled = true
+local isWalking = false
+local isJumping = false
+local lastJumpTime = 0
+local MIN_JUMP_INTERVAL = 0.05
+local currentJumpSound = "UNYAH"
+local currentWalkSound = "CITCIT"
+local allSoundsEnabled = true
+
+local jumpConnection = nil
+local runConnection = nil
+local stateConnection = nil
+local heartbeatConnection = nil
+
+local jumpMasterToggle = nil
+local walkMasterToggle = nil
+local jumpToggleButtons = {}
+local walkToggleButtons = {}
+
+-- ═══════════════════════════════════════════════
+-- SOUND MANAGEMENT
+-- ═══════════════════════════════════════════════
+local function hideDefaultSounds(char)
+    if not char then return end
+    if char:FindFirstChild("Jump") then
+        defaultJumpSound = char:FindFirstChild("Jump")
+        defaultJumpSound.Volume = 0
+    end
+    if humanoid and humanoid:FindFirstChild("Jump") then
+        defaultJumpSound = humanoid:FindFirstChild("Jump")
+        defaultJumpSound.Volume = 0
+    end
+    for _, sound in pairs(char:GetDescendants()) do
+        if sound:IsA("Sound") and (sound.Name == "Footstep" or sound.Name == "Running") then
+            defaultFootstepSound = sound
+            defaultFootstepSound.Volume = 0
+        end
+    end
+    if humanoid then
+        for _, sound in pairs(humanoid:GetChildren()) do
+            if sound:IsA("Sound") and (sound.Name == "Footstep" or sound.Name == "Running") then
+                defaultFootstepSound = sound
+                defaultFootstepSound.Volume = 0
             end
-        end)
-    end
-end
-
-function MusicPlayer:playSong(index)
-    local song = self.playlist[index]
-    if not song then return end
-    self.state.currentIndex = index
-    self.state.isLoading = true
-    self:loadSound()
-    self.sound:Stop()
-    self.sound.SoundId = song.id
-    self.sound.Volume = self.state.volume / 10
-    self.sound:Play()
-    self.state.isPlaying = true
-    self.state.isLoading = false
-    self:updateUI()
-    debugPrint("▶ Playing:", song.title)
-end
-
-function MusicPlayer:togglePlay()
-    if not self.sound then self:loadSound() end
-    if self.state.isPlaying then
-        self.sound:Pause()
-        self.state.isPlaying = false
-    else
-        if self.sound.SoundId == "" then
-            self:playSong(self.state.currentIndex)
-        else
-            self.sound:Resume()
-            self.state.isPlaying = true
-        end
-    end
-    self:updateUI()
-end
-
-function MusicPlayer:nextSong()
-    local count = #self.playlist
-    if count == 0 then return end
-    local nextIndex
-    if self.state.loopMode == "one" then
-        nextIndex = self.state.currentIndex
-    elseif self.state.shuffle then
-        nextIndex = math.random(1, count)
-    else
-        nextIndex = (self.state.currentIndex % count) + 1
-    end
-    self:playSong(nextIndex)
-end
-
-function MusicPlayer:prevSong()
-    local count = #self.playlist
-    if count == 0 then return end
-    local prevIndex
-    if self.state.shuffle then
-        prevIndex = math.random(1, count)
-    else
-        prevIndex = self.state.currentIndex - 1
-        if prevIndex < 1 then prevIndex = count end
-    end
-    self:playSong(prevIndex)
-end
-
-function MusicPlayer:toggleShuffle()
-    self.state.shuffle = not self.state.shuffle
-    self:updateUI()
-end
-
-function MusicPlayer:toggleLoop()
-    if self.state.loopMode == "all" then
-        self.state.loopMode = "one"
-    elseif self.state.loopMode == "one" then
-        self.state.loopMode = "none"
-    else
-        self.state.loopMode = "all"
-    end
-    self:updateUI()
-end
-
-function MusicPlayer:setVolume(val)
-    self.state.volume = val
-    if self.sound then
-        self.sound.Volume = val / 10
-    end
-end
-
-function MusicPlayer:addCustomSong(id, title)
-    local cleanId = id:gsub("[^%d]", "")
-    if cleanId == "" then
-        self:showNotification("Invalid Sound ID!", "error")
-        return false
-    end
-    local fullId = "rbxassetid://" .. cleanId
-    table.insert(self.customSongs, {id = fullId, title = title, favorite = false})
-    table.insert(self.playlist, {id = fullId, title = title, favorite = false})
-    self:showNotification("Added: " .. title, "success")
-    self:updatePlaylistDisplay()
-    return true
-end
-
-function MusicPlayer:updateProgress()
-    if not self.sound or not self.ui.progressFill then return end
-    local total = self.sound.TimeLength
-    local current = self.sound.TimePosition
-    if total > 0 then
-        self.ui.progressFill.Size = UDim2.new(current / total, 0, 1, 0)
-        if self.ui.timeLabel then
-            local function fmt(t)
-                local m = math.floor(t / 60)
-                local s = math.floor(t % 60)
-                return string.format("%d:%02d", m, s)
-            end
-            self.ui.timeLabel.Text = fmt(current) .. " / " .. fmt(total)
         end
     end
 end
 
-function MusicPlayer:updateUI()
-    if not self.uiCreated then return end
-    -- Play/Pause icon
-    if self.ui.playBtn then
-        self.ui.playBtn.Text = self.state.isPlaying and ICONS.PAUSE or ICONS.PLAY
+local function setupCustomSounds()
+    if not rootPart then return end
+    if jumpSound then jumpSound:Destroy() end
+    if walkSound then walkSound:Destroy() end
+
+    local currentJumpId = currentJumpSound == "UNYAH" and UNYAH_JUMP_ID or
+                         (currentJumpSound == "MARIO" and MARIO_JUMP_ID or EIGHTBIT_JUMP_ID)
+
+    local sfxVolume = 1
+    if _G.AdvancedSettings and _G.AdvancedSettings.AudioManager then
+        local audioMgr = _G.AdvancedSettings.AudioManager
+        sfxVolume = (audioMgr.masterVolume / 10) * (audioMgr.sfxVolume / 10)
     end
-    -- Song title
-    local song = self:getCurrentSong()
-    if self.ui.songTitle then
-        self.ui.songTitle.Text = song and song.title or "No Song"
-    end
-    -- Shuffle
-    if self.ui.shuffleBtn then
-        local colors = _G.AdvancedSettings.colors
-        self.ui.shuffleBtn.TextColor3 = self.state.shuffle and colors.accent or colors.textGray
-    end
-    -- Loop
-    if self.ui.loopBtn then
-        local colors = _G.AdvancedSettings.colors
-        local loopText = self.state.loopMode == "all" and ICONS.LOOP_ALL
-                      or self.state.loopMode == "one" and ICONS.LOOP_ONE
-                      or "○"
-        self.ui.loopBtn.Text = loopText
-        self.ui.loopBtn.TextColor3 = self.state.loopMode ~= "none"
-            and colors.accent or colors.textGray
-    end
+
+    jumpSound = Instance.new("Sound")
+    jumpSound.Name = "CustomJump"
+    jumpSound.SoundId = currentJumpId
+    jumpSound.Volume = sfxVolume
+    jumpSound.Looped = false
+    jumpSound.Parent = rootPart
+
+    local currentSoundId = currentWalkSound == "CITCIT" and CITCIT_WALK_ID or
+                          (currentWalkSound == "SQUIDWARD" and SQUIDWARD_WALK_ID or
+                          (currentWalkSound == "SPONGEBOB" and SPONGEBOB_WALK_ID or MRKRAB_WALK_ID))
+
+    walkSound = Instance.new("Sound")
+    walkSound.Name = "CustomFootstep"
+    walkSound.SoundId = currentSoundId
+    walkSound.Volume = sfxVolume
+    walkSound.Looped = true
+    walkSound.PlaybackSpeed = 1
+    walkSound.RollOffMaxDistance = 100
+    walkSound.RollOffMinDistance = 10
+    walkSound.Parent = rootPart
 end
 
-function MusicPlayer:updatePlaylistDisplay()
-    if not self.ui.playlistContainer then return end
-    -- Clear existing
-    for _, child in ipairs(self.ui.playlistContainer:GetChildren()) do
-        if not child:IsA("UIListLayout") then child:Destroy() end
-    end
-
-    local colors = _G.AdvancedSettings.colors
-    local isMobile = _G.AdvancedSettings.isMobile
-    local isConsole = _G.AdvancedSettings and _G.AdvancedSettings.isConsole or false
-    local utils = _G.AdvancedSettings.utils
-    local itemH = isConsole and 52 or (isMobile and 36 or 44)
-    local textSz = isConsole and 14 or (isMobile and 9 or 12)
-
-    for i, song in ipairs(self.playlist) do
-        local item = Instance.new("Frame")
-        item.Size = UDim2.new(1, 0, 0, itemH)
-        item.BackgroundColor3 = colors.card
-        item.BackgroundTransparency = i == self.state.currentIndex and 0.3 or 0.6
-        item.BorderSizePixel = 0
-        item.LayoutOrder = i
-        item.Parent = self.ui.playlistContainer
-        utils.corner(item, 8)
-
-        local numLabel = Instance.new("TextLabel")
-        numLabel.Size = UDim2.new(0, isConsole and 30 or 22, 1, 0)
-        numLabel.Position = UDim2.new(0, isConsole and 10 or 6, 0, 0)
-        numLabel.BackgroundTransparency = 1
-        numLabel.Text = tostring(i)
-        numLabel.TextColor3 = i == self.state.currentIndex and colors.accent or colors.textDark
-        numLabel.Font = Enum.Font.GothamBold
-        numLabel.TextSize = textSz
-        numLabel.ZIndex = 204
-        numLabel.Parent = item
-
-        local titleLabel = Instance.new("TextLabel")
-        titleLabel.Size = UDim2.new(1, isConsole and -80 or -60, 1, 0)
-        titleLabel.Position = UDim2.new(0, isConsole and 46 or 30, 0, 0)
-        titleLabel.BackgroundTransparency = 1
-        titleLabel.Text = song.title
-        titleLabel.TextColor3 = i == self.state.currentIndex and colors.text or colors.textGray
-        titleLabel.Font = Enum.Font.GothamBold
-        titleLabel.TextSize = textSz
-        titleLabel.TextXAlignment = Enum.TextXAlignment.Left
-        titleLabel.TextTruncate = Enum.TextTruncate.AtEnd
-        titleLabel.ZIndex = 204
-        titleLabel.Parent = item
-
-        -- Play button per item
-        local playItemBtn = Instance.new("TextButton")
-        playItemBtn.Size = UDim2.new(1, 0, 1, 0)
-        playItemBtn.BackgroundTransparency = 1
-        playItemBtn.Text = ""
-        playItemBtn.ZIndex = 205
-        playItemBtn.Selectable = isConsole
-        playItemBtn.Parent = item
-
-        local idx = i
-        local function onPlayItem()
-            self:playSong(idx)
-            self:updatePlaylistDisplay()
-        end
-        playItemBtn.MouseButton1Click:Connect(onPlayItem)
-        playItemBtn.Activated:Connect(onPlayItem)  -- PATCH: Gamepad
-
-        -- PATCH: Hover hanya PC/Mobile
-        if not isConsole then
-            item.MouseEnter:Connect(function()
-                utils.tween(item, TweenInfo.new(0.15), {BackgroundTransparency = 0.3})
-            end)
-            item.MouseLeave:Connect(function()
-                utils.tween(item, TweenInfo.new(0.15), {
-                    BackgroundTransparency = idx == self.state.currentIndex and 0.3 or 0.6
-                })
+-- ═══════════════════════════════════════════════
+-- EVENT HANDLERS
+-- ═══════════════════════════════════════════════
+local function onJump(jumping)
+    if not jumping then return end
+    local currentTime = tick()
+    if currentTime - lastJumpTime < MIN_JUMP_INTERVAL then return end
+    lastJumpTime = currentTime
+    if jumpEnabled and allSoundsEnabled then
+        if jumpSound and jumpSound.IsPlaying then jumpSound:Stop() end
+        if defaultJumpSound then defaultJumpSound.Volume = 0 end
+        if jumpSound then
+            task.spawn(function()
+                jumpSound.TimePosition = 0
+                jumpSound:Play()
             end)
         end
+    elseif defaultJumpSound then
+        defaultJumpSound.Volume = 1
     end
 end
 
-function MusicPlayer:showNotification(message, notifType)
-    if not self.ui.notificationContainer then return end
-    local colors = _G.AdvancedSettings.colors
-    local isMobile = _G.AdvancedSettings.isMobile
-    local isConsole = _G.AdvancedSettings and _G.AdvancedSettings.isConsole or false
-    local utils = _G.AdvancedSettings.utils
-
-    local bgColor = colors.card
-    local textColor = colors.text
-    local icon = "ℹ️"
-    if notifType == "error" then bgColor = colors.bad; textColor = Color3.new(1,1,1); icon = "❌"
-    elseif notifType == "success" then bgColor = colors.good; textColor = Color3.new(1,1,1); icon = "✅"
-    elseif notifType == "warning" then bgColor = Color3.fromRGB(255,180,0); textColor = Color3.new(1,1,1); icon = "⚠️" end
-
-    local toastW = isConsole and 420 or (isMobile and 240 or 380)
-    local toastH = isConsole and 80 or (isMobile and 60 or 90)
-    local pad = isConsole and 24 or (isMobile and 8 or 20)
-
-    local toast = Instance.new("Frame")
-    toast.Size = UDim2.new(0, toastW, 0, toastH)
-    toast.Position = UDim2.new(1, -(toastW + pad), 0, pad)
-    toast.BackgroundColor3 = bgColor
-    toast.BackgroundTransparency = 0.1
-    toast.BorderSizePixel = 0
-    toast.ZIndex = 1000
-    toast.Parent = self.ui.notificationContainer
-    utils.corner(toast, isConsole and 14 or (isMobile and 10 or 16))
-
-    local iconLabel = Instance.new("TextLabel")
-    iconLabel.Size = UDim2.new(0, isConsole and 60 or (isMobile and 40 or 50), 1, 0)
-    iconLabel.Position = UDim2.new(0, 10, 0, 0)
-    iconLabel.BackgroundTransparency = 1
-    iconLabel.Text = icon
-    iconLabel.TextColor3 = textColor
-    iconLabel.Font = Enum.Font.GothamBold
-    iconLabel.TextSize = isConsole and 28 or (isMobile and 20 or 28)
-    iconLabel.ZIndex = 1001
-    iconLabel.Parent = toast
-
-    local msgLabel = Instance.new("TextLabel")
-    msgLabel.Size = UDim2.new(1, isConsole and -80 or (isMobile and -56 or -70), 1, 0)
-    msgLabel.Position = UDim2.new(0, isConsole and 72 or (isMobile and 48 or 60), 0, 0)
-    msgLabel.BackgroundTransparency = 1
-    msgLabel.Text = message
-    msgLabel.TextColor3 = textColor
-    msgLabel.Font = Enum.Font.GothamBold
-    msgLabel.TextSize = isConsole and 15 or (isMobile and 9 or 12)
-    msgLabel.TextXAlignment = Enum.TextXAlignment.Left
-    msgLabel.TextWrapped = true
-    msgLabel.ZIndex = 1001
-    msgLabel.Parent = toast
-
-    -- Animate in & out
-    toast.Position = UDim2.new(1, pad, 0, pad)
-    utils.tween(toast, TweenInfo.new(0.3, Enum.EasingStyle.Quart, Enum.EasingDirection.Out), {
-        Position = UDim2.new(1, -(toastW + pad), 0, pad)
-    })
-    task.delay(2.5, function()
-        utils.tween(toast, TweenInfo.new(0.3), {
-            Position = UDim2.new(1, pad, 0, pad),
-            BackgroundTransparency = 1
-        })
-        task.delay(0.3, function()
-            if toast.Parent then toast:Destroy() end
-        end)
-    end)
+local function updateWalkSoundSpeed(speed)
+    if not walkSound then return end
+    local baseSpeed = 16
+    local currentSpeed = humanoid and humanoid.WalkSpeed or baseSpeed
+    local speedRatio = speed / currentSpeed
+    local playbackSpeed = math.clamp(0.5 + (speedRatio * 1.5), 0.5, 2.0)
+    if walkSound.PlaybackSpeed ~= playbackSpeed then
+        game:GetService("TweenService"):Create(
+            walkSound,
+            TweenInfo.new(0.1, Enum.EasingStyle.Linear),
+            {PlaybackSpeed = playbackSpeed}
+        ):Play()
+    end
 end
 
-function MusicPlayer:init()
-    if self.initialized then return end
-    self.initialized = true
-
-    -- Load playlist
-    for _, song in ipairs(self.defaultPlaylist) do
-        table.insert(self.playlist, {id = song.id, title = song.title, favorite = false})
+local function ensureSoundPlaying()
+    if walkEnabled and allSoundsEnabled and isWalking and not isJumping then
+        if walkSound and not walkSound.IsPlaying then walkSound:Play() end
+    elseif walkSound and walkSound.IsPlaying then
+        walkSound:Stop()
     end
+end
 
-    self:loadSound()
-    debugPrint("✅ MusicPlayer initialized, songs:", #self.playlist)
+local function handleWalking(speed)
+    if not allSoundsEnabled or not walkEnabled then
+        isWalking = false
+        if walkSound and walkSound.IsPlaying then walkSound:Stop() end
+        if defaultFootstepSound then
+            defaultFootstepSound.Volume = not allSoundsEnabled and 1 or 0
+        end
+        return
+    end
+    isWalking = speed > 0.1
+    if isWalking then
+        updateWalkSoundSpeed(speed)
+        if defaultFootstepSound then defaultFootstepSound.Volume = 0 end
+    else
+        if walkSound and walkSound.IsPlaying then walkSound:Stop() end
+    end
+end
+
+local function handleStateChanged(_, newState)
+    if newState == Enum.HumanoidStateType.Jumping or
+       newState == Enum.HumanoidStateType.Freefall then
+        isJumping = true
+        if walkSound and walkSound.IsPlaying then walkSound:Stop() end
+    elseif newState == Enum.HumanoidStateType.Landed or
+           newState == Enum.HumanoidStateType.Running or
+           newState == Enum.HumanoidStateType.RunningNoPhysics then
+        isJumping = false
+    end
 end
 
 -- ═══════════════════════════════════════════════
 -- CREATE UI CONTENT
 -- ═══════════════════════════════════════════════
-function MusicTab.createContent(contentScroll, colors, isMobile, utils)
+function SFXTab.createContent(parent, Colors, isMobile, Utils)
+    -- PATCH: ambil isConsole dari global
     local isConsole = _G.AdvancedSettings and _G.AdvancedSettings.isConsole or false
 
-    local textSz = isConsole and 16 or (isMobile and 10 or 13)
-    local iconSz = isConsole and 22 or (isMobile and 14 or 18)
-    local pad = isConsole and 20 or (isMobile and 10 or 16)
+    local cardHeight = isConsole and 58 or (isMobile and 46 or 54)
+    local textSize = isConsole and 15 or (isMobile and 10 or 13)
+    local descSize = isConsole and 12 or (isMobile and 8 or 11)
+    local leftPad = isConsole and 18 or (isMobile and 10 or 14)
 
-    -- Notification container
-    local notifContainer = Instance.new("Frame")
-    notifContainer.Size = UDim2.new(1, 0, 1, 0)
-    notifContainer.BackgroundTransparency = 1
-    notifContainer.ZIndex = 500
-    notifContainer.Parent = contentScroll
-    MusicPlayer.ui.notificationContainer = notifContainer
+    -- PATCH: Helper untuk buat toggle button — tambah Activated
+    local function createToggleUI(parent, labelText, yPos)
+        local card = Instance.new("Frame")
+        card.Size = UDim2.new(1, -16, 0, cardHeight)
+        card.Position = UDim2.new(0, 8, 0, yPos)
+        card.BackgroundColor3 = Colors.card
+        card.BackgroundTransparency = 0.5
+        card.BorderSizePixel = 0
+        card.ZIndex = 202
+        card.Parent = parent
+        Utils.corner(card, 8)
 
-    -- ════════════════════════════════
-    -- PLAYER CARD
-    -- ════════════════════════════════
-    local playerCard = Instance.new("Frame")
-    playerCard.Name = "PlayerCard"
-    playerCard.Size = UDim2.new(1, -4, 0, isConsole and 200 or (isMobile and 150 or 180))
-    playerCard.BackgroundColor3 = colors.card
-    playerCard.BackgroundTransparency = 0.3
-    playerCard.BorderSizePixel = 0
-    playerCard.ZIndex = 202
-    playerCard.LayoutOrder = 0
-    playerCard.Parent = contentScroll
-    utils.corner(playerCard, 16)
+        local label = Instance.new("TextLabel")
+        label.Size = UDim2.new(0.7, 0, 1, 0)
+        label.Position = UDim2.new(0, leftPad, 0, 0)
+        label.BackgroundTransparency = 1
+        label.Text = labelText
+        label.TextColor3 = Colors.text
+        label.Font = Enum.Font.GothamBold
+        label.TextSize = textSize
+        label.TextXAlignment = Enum.TextXAlignment.Left
+        label.ZIndex = 203
+        label.Parent = card
 
-    local playerStroke = Instance.new("UIStroke")
-    playerStroke.Color = colors.accent
-    playerStroke.Thickness = 1.5
-    playerStroke.Transparency = 0.4
-    playerStroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
-    playerStroke.Parent = playerCard
+        local toggleW = isConsole and 46 or (isMobile and 32 or 38)
+        local toggleH = isConsole and 24 or (isMobile and 16 or 20)
+        local knobSz  = isConsole and 18 or (isMobile and 12 or 16)
+        local rightPad = isConsole and 18 or (isMobile and 10 or 14)
 
-    -- Song title
-    local songTitle = Instance.new("TextLabel")
-    songTitle.Size = UDim2.new(1, -pad*2, 0, isConsole and 34 or (isMobile and 20 or 28))
-    songTitle.Position = UDim2.new(0, pad, 0, isConsole and 16 or (isMobile and 10 or 14))
-    songTitle.BackgroundTransparency = 1
-    songTitle.Text = "♪ No Song"
-    songTitle.TextColor3 = colors.text
-    songTitle.Font = Enum.Font.GothamBold
-    songTitle.TextSize = isConsole and 18 or (isMobile and 11 or 15)
-    songTitle.TextXAlignment = Enum.TextXAlignment.Left
-    songTitle.TextTruncate = Enum.TextTruncate.AtEnd
-    songTitle.ZIndex = 203
-    songTitle.Parent = playerCard
-    MusicPlayer.ui.songTitle = songTitle
+        local toggleBg = Instance.new("Frame")
+        toggleBg.Size = UDim2.new(0, toggleW, 0, toggleH)
+        toggleBg.Position = UDim2.new(1, -(rightPad + toggleW), 0.5, -toggleH/2)
+        toggleBg.BackgroundColor3 = Colors.toggleOff
+        toggleBg.BorderSizePixel = 0
+        toggleBg.ZIndex = 203
+        toggleBg.Parent = card
+        Utils.corner(toggleBg, toggleH/2)
 
-    -- Progress bar
-    local progY = isConsole and 58 or (isMobile and 38 or 50)
-    local progH = isConsole and 8 or (isMobile and 4 or 6)
+        local toggleStroke = Instance.new("UIStroke")
+        toggleStroke.Color = Colors.divider
+        toggleStroke.Thickness = 1
+        toggleStroke.Transparency = 0.7
+        toggleStroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
+        toggleStroke.Parent = toggleBg
 
-    local progressBg = Instance.new("Frame")
-    progressBg.Size = UDim2.new(1, -pad*2, 0, progH)
-    progressBg.Position = UDim2.new(0, pad, 0, progY)
-    progressBg.BackgroundColor3 = colors.toggleOff
-    progressBg.BorderSizePixel = 0
-    progressBg.ZIndex = 203
-    progressBg.Parent = playerCard
-    utils.corner(progressBg, progH/2)
+        local toggleKnob = Instance.new("Frame")
+        toggleKnob.Size = UDim2.new(0, knobSz, 0, knobSz)
+        toggleKnob.Position = UDim2.new(0, 2, 0.5, -knobSz/2)
+        toggleKnob.BackgroundColor3 = Colors.text
+        toggleKnob.BorderSizePixel = 0
+        toggleKnob.ZIndex = 204
+        toggleKnob.Parent = toggleBg
+        Utils.corner(toggleKnob, knobSz/2)
 
-    local progressFill = Instance.new("Frame")
-    progressFill.Size = UDim2.new(0, 0, 1, 0)
-    progressFill.BackgroundColor3 = colors.accent
-    progressFill.BorderSizePixel = 0
-    progressFill.ZIndex = 204
-    progressFill.Parent = progressBg
-    utils.corner(progressFill, progH/2)
-    MusicPlayer.ui.progressFill = progressFill
+        local toggleBtn = Instance.new("TextButton")
+        toggleBtn.Size = UDim2.new(1, 0, 1, 0)
+        toggleBtn.BackgroundTransparency = 1
+        toggleBtn.Text = ""
+        toggleBtn.ZIndex = 205
+        toggleBtn.Selectable = isConsole
+        toggleBtn.Parent = toggleBg
 
-    local timeLabel = Instance.new("TextLabel")
-    timeLabel.Size = UDim2.new(1, -pad*2, 0, isConsole and 20 or (isMobile and 12 or 16))
-    timeLabel.Position = UDim2.new(0, pad, 0, progY + progH + 4)
-    timeLabel.BackgroundTransparency = 1
-    timeLabel.Text = "0:00 / 0:00"
-    timeLabel.TextColor3 = colors.textDark
-    timeLabel.Font = Enum.Font.Gotham
-    timeLabel.TextSize = isConsole and 13 or (isMobile and 8 or 10)
-    timeLabel.TextXAlignment = Enum.TextXAlignment.Left
-    timeLabel.ZIndex = 203
-    timeLabel.Parent = playerCard
-    MusicPlayer.ui.timeLabel = timeLabel
-
-    -- Control buttons row
-    local ctrlY = isConsole and 100 or (isMobile and 66 or 84)
-    local btnSz  = isConsole and 52 or (isMobile and 34 or 42)
-    local btnGap = isConsole and 10 or 6
-    local totalBtns = 5
-    local totalW = totalBtns * btnSz + (totalBtns - 1) * btnGap
-
-    local ctrlFrame = Instance.new("Frame")
-    ctrlFrame.Size = UDim2.new(0, totalW, 0, btnSz)
-    ctrlFrame.Position = UDim2.new(0.5, -totalW/2, 0, ctrlY)
-    ctrlFrame.BackgroundTransparency = 1
-    ctrlFrame.ZIndex = 203
-    ctrlFrame.Parent = playerCard
-
-    local function makeCtrlBtn(text, xOffset, accent)
-        local b = Instance.new("TextButton")
-        b.Size = UDim2.new(0, btnSz, 0, btnSz)
-        b.Position = UDim2.new(0, xOffset, 0, 0)
-        b.BackgroundColor3 = accent and colors.accent or colors.card
-        b.BackgroundTransparency = accent and 0.1 or 0.5
-        b.BorderSizePixel = 0
-        b.Text = text
-        b.TextColor3 = accent and colors.bg or colors.text
-        b.Font = Enum.Font.GothamBold
-        b.TextSize = iconSz
-        b.AutoButtonColor = false
-        b.ZIndex = 204
-        b.Selectable = isConsole
-        b.Parent = ctrlFrame
-        utils.corner(b, btnSz/2)
-        return b
-    end
-
-    local shuffleBtn = makeCtrlBtn(ICONS.SHUFFLE, 0, false)
-    local prevBtn    = makeCtrlBtn(ICONS.PREV,    btnSz + btnGap, false)
-    local playBtn    = makeCtrlBtn(ICONS.PLAY,    (btnSz + btnGap)*2, true)
-    local nextBtn    = makeCtrlBtn(ICONS.NEXT,    (btnSz + btnGap)*3, false)
-    local loopBtn    = makeCtrlBtn(ICONS.LOOP_ALL,(btnSz + btnGap)*4, false)
-
-    MusicPlayer.ui.shuffleBtn = shuffleBtn
-    MusicPlayer.ui.playBtn    = playBtn
-    MusicPlayer.ui.loopBtn    = loopBtn
-
-    -- PATCH: Semua control + Activated untuk gamepad
-    local function onPlay()    MusicPlayer:togglePlay()   end
-    local function onPrev()    MusicPlayer:prevSong()     end
-    local function onNext()    MusicPlayer:nextSong()     end
-    local function onShuffle() MusicPlayer:toggleShuffle() end
-    local function onLoop()    MusicPlayer:toggleLoop()   end
-
-    playBtn.MouseButton1Click:Connect(onPlay);    playBtn.Activated:Connect(onPlay)
-    prevBtn.MouseButton1Click:Connect(onPrev);    prevBtn.Activated:Connect(onPrev)
-    nextBtn.MouseButton1Click:Connect(onNext);    nextBtn.Activated:Connect(onNext)
-    shuffleBtn.MouseButton1Click:Connect(onShuffle); shuffleBtn.Activated:Connect(onShuffle)
-    loopBtn.MouseButton1Click:Connect(onLoop);    loopBtn.Activated:Connect(onLoop)
-
-    -- PATCH: Hover hanya PC/Mobile
-    if not isConsole then
-        for _, b in pairs({shuffleBtn, prevBtn, playBtn, nextBtn, loopBtn}) do
-            b.MouseEnter:Connect(function()
-                utils.tween(b, TweenInfo.new(0.15), {BackgroundTransparency = 0.2})
+        -- PATCH: Hover hanya PC/Mobile
+        if not isConsole then
+            card.MouseEnter:Connect(function()
+                Utils.tween(card, TweenInfo.new(0.15), {BackgroundTransparency = 0.3})
             end)
-            b.MouseLeave:Connect(function()
-                utils.tween(b, TweenInfo.new(0.15), {BackgroundTransparency = 0.5})
+            card.MouseLeave:Connect(function()
+                Utils.tween(card, TweenInfo.new(0.15), {BackgroundTransparency = 0.5})
             end)
         end
+
+        return card, toggleBg, toggleKnob, toggleStroke, toggleBtn, toggleW, toggleH, knobSz
     end
 
-    -- Console controller hint
-    if isConsole then
-        local hintY = ctrlY + btnSz + 10
-        local hintLabel = Instance.new("TextLabel")
-        hintLabel.Size = UDim2.new(1, -pad*2, 0, 22)
-        hintLabel.Position = UDim2.new(0, pad, 0, hintY)
-        hintLabel.BackgroundTransparency = 1
-        hintLabel.Text = "🎮  A=Play/Pause   LB=Prev   RB=Next"
-        hintLabel.TextColor3 = colors.textDark
-        hintLabel.Font = Enum.Font.Gotham
-        hintLabel.TextSize = 13
-        hintLabel.ZIndex = 203
-        hintLabel.Parent = playerCard
+    local function setToggleActive(toggleBg, toggleKnob, toggleStroke, active, toggleW, knobSz)
+        Utils.tween(toggleBg, TweenInfo.new(0.2), {BackgroundColor3 = active and Colors.toggleOn or Colors.toggleOff})
+        Utils.tween(toggleStroke, TweenInfo.new(0.2), {
+            Color = active and Colors.accent or Colors.divider,
+            Transparency = active and 0 or 0.7
+        })
+        Utils.tween(toggleKnob, TweenInfo.new(0.2, Enum.EasingStyle.Quad), {
+            Position = active
+                and UDim2.new(1, -(knobSz + 2), 0.5, -knobSz/2)
+                or  UDim2.new(0, 2, 0.5, -knobSz/2)
+        })
     end
 
-    -- ════════════════════════════════
-    -- VOLUME SLIDER (compact)
-    -- ════════════════════════════════
-    local volY = isConsole and 170 or (isMobile and 120 or 148)
-    local volH = isConsole and 20 or (isMobile and 12 or 16)
+    -- ════════════════════════════════════════════
+    -- SECTION: ALL SOUNDS MASTER TOGGLE
+    -- ════════════════════════════════════════════
+    local masterContainer = Instance.new("Frame")
+    masterContainer.Name = "MasterContainer"
+    masterContainer.Size = UDim2.new(1, -8, 0, cardHeight + 16)
+    masterContainer.BackgroundColor3 = Colors.card
+    masterContainer.BackgroundTransparency = 0.7
+    masterContainer.BorderSizePixel = 0
+    masterContainer.ZIndex = 202
+    masterContainer.LayoutOrder = 1
+    masterContainer.Parent = parent
+    Utils.corner(masterContainer, 10)
 
-    local volLabel = Instance.new("TextLabel")
-    volLabel.Size = UDim2.new(0, isConsole and 80 or 60, 0, volH)
-    volLabel.Position = UDim2.new(0, pad, 0, volY)
-    volLabel.BackgroundTransparency = 1
-    volLabel.Text = "VOL"
-    volLabel.TextColor3 = colors.textGray
-    volLabel.Font = Enum.Font.GothamBold
-    volLabel.TextSize = isConsole and 13 or (isMobile and 9 or 11)
-    volLabel.ZIndex = 203
-    volLabel.Parent = playerCard
+    local allCard, allBg, allKnob, allStroke, allBtn, allTogW, allTogH, allKnobSz =
+        createToggleUI(masterContainer, "🔊 All Sounds", 8)
 
-    local volTrackW = isConsole and 200 or (isMobile and 120 or 160)
-    local volBg = Instance.new("Frame")
-    volBg.Size = UDim2.new(0, volTrackW, 0, isConsole and 8 or 6)
-    volBg.Position = UDim2.new(0, pad + (isConsole and 88 or 66), 0, volY + volH/2 - (isConsole and 4 or 3))
-    volBg.BackgroundColor3 = colors.toggleOff
-    volBg.BorderSizePixel = 0
-    volBg.ZIndex = 203
-    volBg.Parent = playerCard
-    utils.corner(volBg, 4)
+    allBg.BackgroundColor3 = allSoundsEnabled and Colors.toggleOn or Colors.toggleOff
+    allStroke.Color = allSoundsEnabled and Colors.accent or Colors.divider
+    allStroke.Transparency = allSoundsEnabled and 0 or 0.7
+    allKnob.Position = allSoundsEnabled
+        and UDim2.new(1, -(allKnobSz + 2), 0.5, -allKnobSz/2)
+        or  UDim2.new(0, 2, 0.5, -allKnobSz/2)
 
-    local volFill = Instance.new("Frame")
-    volFill.Size = UDim2.new(MusicPlayer.state.volume / 10, 0, 1, 0)
-    volFill.BackgroundColor3 = colors.accent
-    volFill.BorderSizePixel = 0
-    volFill.ZIndex = 204
-    volFill.Parent = volBg
-    utils.corner(volFill, 4)
-
-    local volValLabel = Instance.new("TextLabel")
-    volValLabel.Size = UDim2.new(0, 30, 0, volH)
-    volValLabel.Position = UDim2.new(0, pad + (isConsole and 296 or 234), 0, volY)
-    volValLabel.BackgroundTransparency = 1
-    volValLabel.Text = tostring(MusicPlayer.state.volume)
-    volValLabel.TextColor3 = colors.accent
-    volValLabel.Font = Enum.Font.GothamBold
-    volValLabel.TextSize = isConsole and 14 or (isMobile and 9 or 11)
-    volValLabel.ZIndex = 203
-    volValLabel.Parent = playerCard
-
-    -- Volume slider drag (PC/Mobile)
-    if not isConsole then
-        local volDragging = false
-        local volHitbox = Instance.new("TextButton")
-        volHitbox.Size = UDim2.new(1, 0, 3, 0)
-        volHitbox.AnchorPoint = Vector2.new(0, 0.5)
-        volHitbox.Position = UDim2.new(0, 0, 0.5, 0)
-        volHitbox.BackgroundTransparency = 1
-        volHitbox.Text = ""
-        volHitbox.ZIndex = 205
-        volHitbox.Parent = volBg
-
-        local function updateVol(input)
-            local rel = math.clamp((input.Position.X - volBg.AbsolutePosition.X) / volBg.AbsoluteSize.X, 0, 1)
-            local v = math.floor(rel * 10 + 0.5)
-            MusicPlayer:setVolume(v)
-            volFill.Size = UDim2.new(v / 10, 0, 1, 0)
-            volValLabel.Text = tostring(v)
-        end
-
-        volHitbox.InputBegan:Connect(function(input)
-            if input.UserInputType == Enum.UserInputType.MouseButton1 or
-               input.UserInputType == Enum.UserInputType.Touch then
-                volDragging = true
-                updateVol(input)
-            end
-        end)
-        UserInputService.InputChanged:Connect(function(input)
-            if volDragging and (input.UserInputType == Enum.UserInputType.MouseMovement or
-               input.UserInputType == Enum.UserInputType.Touch) then
-                updateVol(input)
-            end
-        end)
-        UserInputService.InputEnded:Connect(function(input)
-            if input.UserInputType == Enum.UserInputType.MouseButton1 or
-               input.UserInputType == Enum.UserInputType.Touch then
-                volDragging = false
-            end
-        end)
-    else
-        -- PATCH: Console volume via DPad Up/Down
-        UserInputService.InputBegan:Connect(function(input, gp)
-            if gp then return end
-            if not playerCard.Parent then return end
-            if not playerCard:IsDescendantOf(game:GetService("Players").LocalPlayer.PlayerGui) then return end
-            local v = MusicPlayer.state.volume
-            if input.KeyCode == Enum.KeyCode.DPadUp then
-                v = math.clamp(v + 1, 0, 10)
-                MusicPlayer:setVolume(v)
-                volFill.Size = UDim2.new(v / 10, 0, 1, 0)
-                volValLabel.Text = tostring(v)
-            elseif input.KeyCode == Enum.KeyCode.DPadDown then
-                v = math.clamp(v - 1, 0, 10)
-                MusicPlayer:setVolume(v)
-                volFill.Size = UDim2.new(v / 10, 0, 1, 0)
-                volValLabel.Text = tostring(v)
-            end
-        end)
-    end
-
-    -- ════════════════════════════════
-    -- PLAYLIST TOGGLE BUTTON
-    -- ════════════════════════════════
-    local plBtnCard = Instance.new("Frame")
-    plBtnCard.Size = UDim2.new(1, -4, 0, isConsole and 54 or (isMobile and 38 or 46))
-    plBtnCard.BackgroundColor3 = colors.card
-    plBtnCard.BackgroundTransparency = 0.5
-    plBtnCard.BorderSizePixel = 0
-    plBtnCard.ZIndex = 202
-    plBtnCard.LayoutOrder = 1
-    plBtnCard.Parent = contentScroll
-    utils.corner(plBtnCard, 10)
-
-    local plBtn = Instance.new("TextButton")
-    plBtn.Size = UDim2.new(1, 0, 1, 0)
-    plBtn.BackgroundTransparency = 1
-    plBtn.Text = ICONS.PLAYLIST .. "  Show Playlist (" .. #MusicPlayer.playlist .. " songs)"
-    plBtn.TextColor3 = colors.text
-    plBtn.Font = Enum.Font.GothamBold
-    plBtn.TextSize = isConsole and 16 or (isMobile and 10 or 13)
-    plBtn.ZIndex = 203
-    plBtn.Selectable = isConsole
-    plBtn.Parent = plBtnCard
-
-    -- Playlist panel
-    local playlistPanel = Instance.new("Frame")
-    playlistPanel.Name = "PlaylistPanel"
-    playlistPanel.BackgroundColor3 = colors.card
-    playlistPanel.BackgroundTransparency = 0.3
-    playlistPanel.BorderSizePixel = 0
-    playlistPanel.Visible = false
-    playlistPanel.ZIndex = 202
-    playlistPanel.LayoutOrder = 2
-    playlistPanel.AutomaticSize = Enum.AutomaticSize.Y
-    playlistPanel.Size = UDim2.new(1, -4, 0, 0)
-    playlistPanel.Parent = contentScroll
-    utils.corner(playlistPanel, 12)
-    MusicPlayer.ui.playlistPanel = playlistPanel
-
-    local playlistContainer = Instance.new("Frame")
-    playlistContainer.Size = UDim2.new(1, isConsole and -20 or (isMobile and -16 or -20), 1, isConsole and -20 or (isMobile and -16 or -20))
-    playlistContainer.Position = UDim2.new(0, isConsole and 10 or (isMobile and 8 or 10), 0, isConsole and 10 or (isMobile and 8 or 10))
-    playlistContainer.BackgroundTransparency = 1
-    playlistContainer.BorderSizePixel = 0
-    playlistContainer.AutomaticSize = Enum.AutomaticSize.Y
-    playlistContainer.ZIndex = 203
-    playlistContainer.Parent = playlistPanel
-
-    local playlistLayout = Instance.new("UIListLayout")
-    playlistLayout.Padding = UDim.new(0, 6)
-    playlistLayout.SortOrder = Enum.SortOrder.LayoutOrder
-    playlistLayout.Parent = playlistContainer
-    MusicPlayer.ui.playlistContainer = playlistContainer
-
-    local function onTogglePlaylist()
-        MusicPlayer.state.showPlaylist = not MusicPlayer.state.showPlaylist
-        playlistPanel.Visible = MusicPlayer.state.showPlaylist
-        plBtn.Text = ICONS.PLAYLIST .. (MusicPlayer.state.showPlaylist and "  Hide Playlist" or "  Show Playlist (" .. #MusicPlayer.playlist .. " songs)")
-        if MusicPlayer.state.showPlaylist then
-            MusicPlayer:updatePlaylistDisplay()
+    local function toggleAllSounds()
+        allSoundsEnabled = not allSoundsEnabled
+        setToggleActive(allBg, allKnob, allStroke, allSoundsEnabled, allTogW, allKnobSz)
+        if not allSoundsEnabled then
+            if jumpSound then jumpSound:Stop() end
+            if walkSound then walkSound:Stop() end
+            if defaultFootstepSound then defaultFootstepSound.Volume = 1 end
+            if defaultJumpSound then defaultJumpSound.Volume = 1 end
+        else
+            if defaultFootstepSound then defaultFootstepSound.Volume = 0 end
+            if defaultJumpSound then defaultJumpSound.Volume = 0 end
         end
     end
-    plBtn.MouseButton1Click:Connect(onTogglePlaylist)
-    plBtn.Activated:Connect(onTogglePlaylist)  -- PATCH: Gamepad
+    allBtn.MouseButton1Click:Connect(toggleAllSounds)
+    allBtn.Activated:Connect(toggleAllSounds)  -- PATCH: Gamepad
 
-    -- ════════════════════════════════
-    -- ADD CUSTOM SONG
-    -- PATCH: Di console ini di-disable — tidak ada keyboard
-    -- ════════════════════════════════
-    if not isConsole then
-        local addBtnCard = Instance.new("Frame")
-        addBtnCard.Size = UDim2.new(1, -4, 0, isMobile and 38 or 46)
-        addBtnCard.BackgroundColor3 = colors.card
-        addBtnCard.BackgroundTransparency = 0.5
-        addBtnCard.BorderSizePixel = 0
-        addBtnCard.ZIndex = 202
-        addBtnCard.LayoutOrder = 3
-        addBtnCard.Parent = contentScroll
-        utils.corner(addBtnCard, 10)
-
-        local addToggleBtn = Instance.new("TextButton")
-        addToggleBtn.Size = UDim2.new(1, 0, 1, 0)
-        addToggleBtn.BackgroundTransparency = 1
-        addToggleBtn.Text = ICONS.ADD .. "  Add Custom Song"
-        addToggleBtn.TextColor3 = colors.good
-        addToggleBtn.Font = Enum.Font.GothamBold
-        addToggleBtn.TextSize = isMobile and 10 or 13
-        addToggleBtn.ZIndex = 203
-        addToggleBtn.Parent = addBtnCard
-
-        local addPanel = Instance.new("Frame")
-        addPanel.Size = UDim2.new(1, -4, 0, isMobile and 200 or 296)
-        addPanel.BackgroundColor3 = colors.card
-        addPanel.BackgroundTransparency = 0.3
-        addPanel.BorderSizePixel = 0
-        addPanel.Visible = false
-        addPanel.ZIndex = 202
-        addPanel.LayoutOrder = 4
-        addPanel.Parent = contentScroll
-        utils.corner(addPanel, 16)
-
-        addToggleBtn.MouseButton1Click:Connect(function()
-            MusicPlayer.state.showAddDialog = not MusicPlayer.state.showAddDialog
-            addPanel.Visible = MusicPlayer.state.showAddDialog
-        end)
-
-        local addTitle = Instance.new("TextLabel")
-        addTitle.Size = UDim2.new(1, -20, 0, isMobile and 22 or 34)
-        addTitle.Position = UDim2.new(0, 10, 0, isMobile and 6 or 12)
-        addTitle.BackgroundTransparency = 1
-        addTitle.Text = "Add Custom Song"
-        addTitle.TextColor3 = colors.good
-        addTitle.Font = Enum.Font.GothamBold
-        addTitle.TextSize = isMobile and 12 or 16
-        addTitle.TextXAlignment = Enum.TextXAlignment.Center
-        addTitle.ZIndex = 203
-        addTitle.Parent = addPanel
-
-        local idLabel = Instance.new("TextLabel")
-        idLabel.Size = UDim2.new(1, -20, 0, isMobile and 12 or 16)
-        idLabel.Position = UDim2.new(0, 10, 0, isMobile and 30 or 50)
-        idLabel.BackgroundTransparency = 1
-        idLabel.Text = "Sound ID"
-        idLabel.TextColor3 = colors.text
-        idLabel.Font = Enum.Font.GothamBold
-        idLabel.TextSize = isMobile and 8 or 11
-        idLabel.TextXAlignment = Enum.TextXAlignment.Center
-        idLabel.ZIndex = 203
-        idLabel.Parent = addPanel
-
-        local idInput = Instance.new("TextBox")
-        idInput.Size = UDim2.new(1, -20, 0, isMobile and 30 or 44)
-        idInput.Position = UDim2.new(0, 10, 0, isMobile and 44 or 68)
-        idInput.BackgroundColor3 = colors.toggleOff
-        idInput.BackgroundTransparency = 0.3
-        idInput.TextColor3 = colors.text
-        idInput.PlaceholderColor3 = colors.textGray
-        idInput.PlaceholderText = "Example: 1234567890"
-        idInput.Text = ""
-        idInput.Font = Enum.Font.Gotham
-        idInput.TextSize = isMobile and 8 or 11
-        idInput.ClearTextOnFocus = false
-        idInput.TextXAlignment = Enum.TextXAlignment.Center
-        idInput.BorderSizePixel = 0
-        idInput.ZIndex = 204
-        idInput.Parent = addPanel
-        utils.corner(idInput, 8)
-
-        local titleInputLabel = Instance.new("TextLabel")
-        titleInputLabel.Size = UDim2.new(1, -20, 0, isMobile and 12 or 16)
-        titleInputLabel.Position = UDim2.new(0, 10, 0, isMobile and 78 or 120)
-        titleInputLabel.BackgroundTransparency = 1
-        titleInputLabel.Text = "Track Title"
-        titleInputLabel.TextColor3 = colors.text
-        titleInputLabel.Font = Enum.Font.GothamBold
-        titleInputLabel.TextSize = isMobile and 8 or 11
-        titleInputLabel.TextXAlignment = Enum.TextXAlignment.Center
-        titleInputLabel.ZIndex = 203
-        titleInputLabel.Parent = addPanel
-
-        local titleInput = Instance.new("TextBox")
-        titleInput.Size = UDim2.new(1, -20, 0, isMobile and 30 or 44)
-        titleInput.Position = UDim2.new(0, 10, 0, isMobile and 92 or 140)
-        titleInput.BackgroundColor3 = colors.toggleOff
-        titleInput.BackgroundTransparency = 0.3
-        titleInput.TextColor3 = colors.text
-        titleInput.PlaceholderColor3 = colors.textGray
-        titleInput.PlaceholderText = "Example: My Song"
-        titleInput.Text = ""
-        titleInput.Font = Enum.Font.Gotham
-        titleInput.TextSize = isMobile and 8 or 11
-        titleInput.ClearTextOnFocus = false
-        titleInput.TextXAlignment = Enum.TextXAlignment.Center
-        titleInput.BorderSizePixel = 0
-        titleInput.ZIndex = 204
-        titleInput.Parent = addPanel
-        utils.corner(titleInput, 8)
-
-        local addSongBtn = Instance.new("TextButton")
-        addSongBtn.Size = UDim2.new(1, -20, 0, isMobile and 32 or 46)
-        addSongBtn.Position = UDim2.new(0, 10, 0, isMobile and 130 or 192)
-        addSongBtn.BackgroundColor3 = colors.good
-        addSongBtn.BackgroundTransparency = 0.2
-        addSongBtn.BorderSizePixel = 0
-        addSongBtn.Text = ICONS.ADD .. " Add"
-        addSongBtn.TextColor3 = colors.bg
-        addSongBtn.Font = Enum.Font.GothamBold
-        addSongBtn.TextSize = isMobile and 10 or 13
-        addSongBtn.ZIndex = 204
-        addSongBtn.Parent = addPanel
-        utils.corner(addSongBtn, 8)
-
-        addSongBtn.MouseButton1Click:Connect(function()
-            if idInput.Text ~= "" and titleInput.Text ~= "" then
-                local success = MusicPlayer:addCustomSong(idInput.Text, titleInput.Text)
-                if success then
-                    idInput.Text = ""
-                    titleInput.Text = ""
-                    MusicPlayer.state.showAddDialog = false
-                    addPanel.Visible = false
-                end
-            end
-        end)
-
-        local cancelBtn = Instance.new("TextButton")
-        cancelBtn.Size = UDim2.new(1, -20, 0, isMobile and 28 or 40)
-        cancelBtn.Position = UDim2.new(0, 10, 0, isMobile and 166 or 246)
-        cancelBtn.BackgroundColor3 = colors.card
-        cancelBtn.BackgroundTransparency = 0.4
-        cancelBtn.BorderSizePixel = 0
-        cancelBtn.Text = "Cancel"
-        cancelBtn.TextColor3 = colors.text
-        cancelBtn.Font = Enum.Font.GothamMedium
-        cancelBtn.TextSize = isMobile and 9 or 12
-        cancelBtn.ZIndex = 204
-        cancelBtn.Parent = addPanel
-        utils.corner(cancelBtn, 7)
-
-        cancelBtn.MouseButton1Click:Connect(function()
-            MusicPlayer.state.showAddDialog = false
-            addPanel.Visible = false
-            idInput.Text = ""
-            titleInput.Text = ""
-        end)
-    else
-        -- PATCH: Console — tampilkan info bahwa Add Song tidak tersedia
-        local noAddCard = Instance.new("Frame")
-        noAddCard.Size = UDim2.new(1, -4, 0, 54)
-        noAddCard.BackgroundColor3 = colors.card
-        noAddCard.BackgroundTransparency = 0.6
-        noAddCard.BorderSizePixel = 0
-        noAddCard.ZIndex = 202
-        noAddCard.LayoutOrder = 3
-        noAddCard.Parent = contentScroll
-        utils.corner(noAddCard, 10)
-
-        local noAddLabel = Instance.new("TextLabel")
-        noAddLabel.Size = UDim2.new(1, -20, 1, 0)
-        noAddLabel.Position = UDim2.new(0, 10, 0, 0)
-        noAddLabel.BackgroundTransparency = 1
-        noAddLabel.Text = "⚠️  Add Custom Song not available on console"
-        noAddLabel.TextColor3 = colors.textDark
-        noAddLabel.Font = Enum.Font.Gotham
-        noAddLabel.TextSize = 14
-        noAddLabel.TextXAlignment = Enum.TextXAlignment.Left
-        noAddLabel.ZIndex = 203
-        noAddLabel.Parent = noAddCard
+    -- ════════════════════════════════════════════
+    -- SECTION HEADER helper
+    -- ════════════════════════════════════════════
+    local layoutOrder = 2
+    local function createSectionHeader(text, order)
+        local hdr = Instance.new("TextLabel")
+        hdr.Size = UDim2.new(1, -8, 0, isConsole and 30 or (isMobile and 20 or 26))
+        hdr.BackgroundTransparency = 1
+        hdr.Text = text
+        hdr.TextColor3 = Colors.accent
+        hdr.Font = Enum.Font.GothamBold
+        hdr.TextSize = isConsole and 15 or (isMobile and 10 or 13)
+        hdr.TextXAlignment = Enum.TextXAlignment.Left
+        hdr.ZIndex = 202
+        hdr.LayoutOrder = order
+        hdr.Parent = parent
+        return hdr
     end
 
-    -- Update loop
-    if MusicPlayer.updateLoop then MusicPlayer.updateLoop:Disconnect() end
-    MusicPlayer.updateLoop = RunService.Heartbeat:Connect(function()
-        if MusicPlayer.state.isPlaying and MusicPlayer.sound and MusicPlayer.sound.IsPlaying then
-            MusicPlayer:updateProgress()
+    -- ════════════════════════════════════════════
+    -- SECTION: JUMP SOUNDS
+    -- ════════════════════════════════════════════
+    createSectionHeader("🦘 JUMP SOUNDS", layoutOrder); layoutOrder += 1
+
+    local jumpContainerH = isConsole and 280 or (isMobile and 220 or 260)
+    local jumpContainer = Instance.new("Frame")
+    jumpContainer.Name = "JumpContainer"
+    jumpContainer.Size = UDim2.new(1, -8, 0, jumpContainerH)
+    jumpContainer.BackgroundColor3 = Colors.card
+    jumpContainer.BackgroundTransparency = 0.7
+    jumpContainer.BorderSizePixel = 0
+    jumpContainer.ZIndex = 202
+    jumpContainer.LayoutOrder = layoutOrder; layoutOrder += 1
+    jumpContainer.Parent = parent
+    Utils.corner(jumpContainer, 10)
+
+    -- Jump master toggle
+    local jmCard, jmBg, jmKnob, jmStroke, jmBtn, jmTogW, jmTogH, jmKnobSz =
+        createToggleUI(jumpContainer, "Enable Jump Sounds", 8)
+
+    jmBg.BackgroundColor3 = jumpEnabled and Colors.toggleOn or Colors.toggleOff
+    jmStroke.Color = jumpEnabled and Colors.accent or Colors.divider
+    jmStroke.Transparency = jumpEnabled and 0 or 0.7
+    jmKnob.Position = jumpEnabled
+        and UDim2.new(1, -(jmKnobSz + 2), 0.5, -jmKnobSz/2)
+        or  UDim2.new(0, 2, 0.5, -jmKnobSz/2)
+    jumpMasterToggle = jmBg
+
+    local function toggleJumpMaster()
+        if not allSoundsEnabled then return end
+        jumpEnabled = not jumpEnabled
+        setToggleActive(jmBg, jmKnob, jmStroke, jumpEnabled, jmTogW, jmKnobSz)
+        if not jumpEnabled and jumpSound and jumpSound.IsPlaying then
+            jumpSound:Stop()
         end
-    end)
-
-    MusicPlayer:updateUI()
-    MusicPlayer:updatePlaylistDisplay()
-    MusicPlayer.uiCreated = true
-
-    -- PATCH: Console gamepad music controls (global, saat menu terbuka)
-    if isConsole then
-        UserInputService.InputBegan:Connect(function(input, gp)
-            if gp then return end
-            if not _G.AdvancedSettings.menuOpen then return end
-            if _G.AdvancedSettings.activeTab ~= "MUSIC" then return end
-
-            if input.KeyCode == Enum.KeyCode.ButtonA then
-                MusicPlayer:togglePlay()
-            elseif input.KeyCode == Enum.KeyCode.ButtonL1 then
-                MusicPlayer:prevSong()
-            elseif input.KeyCode == Enum.KeyCode.ButtonR1 then
-                MusicPlayer:nextSong()
-            end
-        end)
     end
+    jmBtn.MouseButton1Click:Connect(toggleJumpMaster)
+    jmBtn.Activated:Connect(toggleJumpMaster)  -- PATCH: Gamepad
+
+    -- Jump divider
+    local jDivY = cardHeight + 16
+    local div1 = Instance.new("Frame")
+    div1.Size = UDim2.new(1, -40, 0, 1)
+    div1.Position = UDim2.new(0, 20, 0, jDivY)
+    div1.BackgroundColor3 = Colors.divider
+    div1.BackgroundTransparency = 0.6
+    div1.BorderSizePixel = 0
+    div1.ZIndex = 202
+    div1.Parent = jumpContainer
+
+    local jTypeLabel = Instance.new("TextLabel")
+    jTypeLabel.Size = UDim2.new(1, -40, 0, isConsole and 26 or (isMobile and 20 or 25))
+    jTypeLabel.Position = UDim2.new(0, 20, 0, jDivY + 4)
+    jTypeLabel.BackgroundTransparency = 1
+    jTypeLabel.Text = "Select Jump Sound:"
+    jTypeLabel.TextColor3 = Colors.textGray
+    jTypeLabel.Font = Enum.Font.GothamBold
+    jTypeLabel.TextSize = isConsole and 14 or (isMobile and 10 or 12)
+    jTypeLabel.TextXAlignment = Enum.TextXAlignment.Left
+    jTypeLabel.ZIndex = 203
+    jTypeLabel.Parent = jumpContainer
+
+    local jBase = jDivY + (isConsole and 34 or (isMobile and 28 or 34))
+    local jStep = cardHeight + 8
+
+    local unyahCard, unyahBg, unyahKnob, unyahStroke, unyahBtn, uBgW, _, uKnobSz =
+        createToggleUI(jumpContainer, "Unyah Jump", jBase)
+    local marioCard, marioBg, marioKnob, marioStroke, marioBtn, mBgW, _, mKnobSz =
+        createToggleUI(jumpContainer, "Mario Jump", jBase + jStep)
+    local eightCard, eightBg, eightKnob, eightStroke, eightBtn, eBgW, _, eKnobSz =
+        createToggleUI(jumpContainer, "8-Bit Jump", jBase + jStep * 2)
+
+    jumpToggleButtons = {
+        UNYAH   = {bg = unyahBg, knob = unyahKnob, stroke = unyahStroke, btn = unyahBtn, w = uBgW, ksz = uKnobSz},
+        MARIO   = {bg = marioBg, knob = marioKnob, stroke = marioStroke, btn = marioBtn, w = mBgW, ksz = mKnobSz},
+        EIGHTBIT= {bg = eightBg, knob = eightKnob, stroke = eightStroke, btn = eightBtn, w = eBgW, ksz = eKnobSz},
+    }
+
+    for key, data in pairs(jumpToggleButtons) do
+        local isActive = (key == currentJumpSound)
+        data.bg.BackgroundColor3 = isActive and Colors.toggleOn or Colors.toggleOff
+        data.stroke.Color = isActive and Colors.accent or Colors.divider
+        data.stroke.Transparency = isActive and 0 or 0.7
+        data.knob.Position = isActive
+            and UDim2.new(1, -(data.ksz + 2), 0.5, -data.ksz/2)
+            or  UDim2.new(0, 2, 0.5, -data.ksz/2)
+    end
+
+    local function switchJumpSound(soundType, soundId)
+        if not allSoundsEnabled or not jumpEnabled then return end
+        currentJumpSound = soundType
+        if jumpSound then jumpSound.SoundId = soundId end
+        for key, data in pairs(jumpToggleButtons) do
+            local isActive = (key == soundType)
+            setToggleActive(data.bg, data.knob, data.stroke, isActive, data.w, data.ksz)
+        end
+    end
+
+    -- PATCH: MouseButton1Click + Activated untuk semua jump toggles
+    unyahBtn.MouseButton1Click:Connect(function() switchJumpSound("UNYAH", UNYAH_JUMP_ID) end)
+    unyahBtn.Activated:Connect(function() switchJumpSound("UNYAH", UNYAH_JUMP_ID) end)
+    marioBtn.MouseButton1Click:Connect(function() switchJumpSound("MARIO", MARIO_JUMP_ID) end)
+    marioBtn.Activated:Connect(function() switchJumpSound("MARIO", MARIO_JUMP_ID) end)
+    eightBtn.MouseButton1Click:Connect(function() switchJumpSound("EIGHTBIT", EIGHTBIT_JUMP_ID) end)
+    eightBtn.Activated:Connect(function() switchJumpSound("EIGHTBIT", EIGHTBIT_JUMP_ID) end)
+
+    -- ════════════════════════════════════════════
+    -- SECTION: WALK SOUNDS
+    -- ════════════════════════════════════════════
+    createSectionHeader("👣 WALK SOUNDS", layoutOrder); layoutOrder += 1
+
+    local walkContainerH = isConsole and 340 or (isMobile and 260 or 320)
+    local walkContainer = Instance.new("Frame")
+    walkContainer.Name = "WalkContainer"
+    walkContainer.Size = UDim2.new(1, -8, 0, walkContainerH)
+    walkContainer.BackgroundColor3 = Colors.card
+    walkContainer.BackgroundTransparency = 0.7
+    walkContainer.BorderSizePixel = 0
+    walkContainer.ZIndex = 202
+    walkContainer.LayoutOrder = layoutOrder; layoutOrder += 1
+    walkContainer.Parent = parent
+    Utils.corner(walkContainer, 10)
+
+    -- Walk master toggle
+    local wmCard, wmBg, wmKnob, wmStroke, wmBtn, wmTogW, wmTogH, wmKnobSz =
+        createToggleUI(walkContainer, "Enable Walk Sounds", 8)
+
+    wmBg.BackgroundColor3 = walkEnabled and Colors.toggleOn or Colors.toggleOff
+    wmStroke.Color = walkEnabled and Colors.accent or Colors.divider
+    wmStroke.Transparency = walkEnabled and 0 or 0.7
+    wmKnob.Position = walkEnabled
+        and UDim2.new(1, -(wmKnobSz + 2), 0.5, -wmKnobSz/2)
+        or  UDim2.new(0, 2, 0.5, -wmKnobSz/2)
+    walkMasterToggle = wmBg
+
+    local function toggleWalkMaster()
+        if not allSoundsEnabled then return end
+        walkEnabled = not walkEnabled
+        setToggleActive(wmBg, wmKnob, wmStroke, walkEnabled, wmTogW, wmKnobSz)
+        if not walkEnabled then
+            if walkSound and walkSound.IsPlaying then walkSound:Stop() end
+        else
+            if isWalking and walkSound then walkSound:Play() end
+        end
+    end
+    wmBtn.MouseButton1Click:Connect(toggleWalkMaster)
+    wmBtn.Activated:Connect(toggleWalkMaster)  -- PATCH: Gamepad
+
+    local wDivY = cardHeight + 16
+    local div2 = Instance.new("Frame")
+    div2.Size = UDim2.new(1, -40, 0, 1)
+    div2.Position = UDim2.new(0, 20, 0, wDivY)
+    div2.BackgroundColor3 = Colors.divider
+    div2.BackgroundTransparency = 0.6
+    div2.BorderSizePixel = 0
+    div2.ZIndex = 202
+    div2.Parent = walkContainer
+
+    local wTypeLabel = Instance.new("TextLabel")
+    wTypeLabel.Size = UDim2.new(1, -40, 0, isConsole and 26 or (isMobile and 20 or 25))
+    wTypeLabel.Position = UDim2.new(0, 20, 0, wDivY + 4)
+    wTypeLabel.BackgroundTransparency = 1
+    wTypeLabel.Text = "Select Walk Sound:"
+    wTypeLabel.TextColor3 = Colors.textGray
+    wTypeLabel.Font = Enum.Font.GothamBold
+    wTypeLabel.TextSize = isConsole and 14 or (isMobile and 10 or 12)
+    wTypeLabel.TextXAlignment = Enum.TextXAlignment.Left
+    wTypeLabel.ZIndex = 203
+    wTypeLabel.Parent = walkContainer
+
+    local wBase = wDivY + (isConsole and 34 or (isMobile and 28 or 34))
+    local wStep = cardHeight + 8
+
+    local citcitCard, citcitBg, citcitKnob, citcitStroke, citcitBtn, cBgW, _, cKnobSz =
+        createToggleUI(walkContainer, "Cit Cit Walk", wBase)
+    local squidCard, squidBg, squidKnob, squidStroke, squidBtn, sBgW, _, sKnobSz =
+        createToggleUI(walkContainer, "Squidward Walk", wBase + wStep)
+    local spongeCard, spongeBg, spongeKnob, spongeStroke, spongeBtn, spBgW, _, spKnobSz =
+        createToggleUI(walkContainer, "SpongeBob Walk", wBase + wStep * 2)
+    local krabCard, krabBg, krabKnob, krabStroke, krabBtn, kBgW, _, kKnobSz =
+        createToggleUI(walkContainer, "Mr. Krabs Walk", wBase + wStep * 3)
+
+    walkToggleButtons = {
+        CITCIT   = {bg = citcitBg, knob = citcitKnob, stroke = citcitStroke, btn = citcitBtn, w = cBgW, ksz = cKnobSz},
+        SQUIDWARD= {bg = squidBg,  knob = squidKnob,  stroke = squidStroke,  btn = squidBtn,  w = sBgW, ksz = sKnobSz},
+        SPONGEBOB= {bg = spongeBg, knob = spongeKnob, stroke = spongeStroke, btn = spongeBtn, w = spBgW, ksz = spKnobSz},
+        MRKRAB   = {bg = krabBg,   knob = krabKnob,   stroke = krabStroke,   btn = krabBtn,   w = kBgW, ksz = kKnobSz},
+    }
+
+    for key, data in pairs(walkToggleButtons) do
+        local isActive = (key == currentWalkSound)
+        data.bg.BackgroundColor3 = isActive and Colors.toggleOn or Colors.toggleOff
+        data.stroke.Color = isActive and Colors.accent or Colors.divider
+        data.stroke.Transparency = isActive and 0 or 0.7
+        data.knob.Position = isActive
+            and UDim2.new(1, -(data.ksz + 2), 0.5, -data.ksz/2)
+            or  UDim2.new(0, 2, 0.5, -data.ksz/2)
+    end
+
+    local function switchWalkSound(soundType, soundId)
+        if not allSoundsEnabled or not walkEnabled then return end
+        currentWalkSound = soundType
+        if walkSound and walkSound.IsPlaying then walkSound:Stop() end
+        if walkSound then walkSound.SoundId = soundId end
+        if isWalking and walkSound then walkSound:Play() end
+        for key, data in pairs(walkToggleButtons) do
+            setToggleActive(data.bg, data.knob, data.stroke, key == soundType, data.w, data.ksz)
+        end
+    end
+
+    -- PATCH: MouseButton1Click + Activated untuk semua walk toggles
+    citcitBtn.MouseButton1Click:Connect(function() switchWalkSound("CITCIT", CITCIT_WALK_ID) end)
+    citcitBtn.Activated:Connect(function() switchWalkSound("CITCIT", CITCIT_WALK_ID) end)
+    squidBtn.MouseButton1Click:Connect(function() switchWalkSound("SQUIDWARD", SQUIDWARD_WALK_ID) end)
+    squidBtn.Activated:Connect(function() switchWalkSound("SQUIDWARD", SQUIDWARD_WALK_ID) end)
+    spongeBtn.MouseButton1Click:Connect(function() switchWalkSound("SPONGEBOB", SPONGEBOB_WALK_ID) end)
+    spongeBtn.Activated:Connect(function() switchWalkSound("SPONGEBOB", SPONGEBOB_WALK_ID) end)
+    krabBtn.MouseButton1Click:Connect(function() switchWalkSound("MRKRAB", MRKRAB_WALK_ID) end)
+    krabBtn.Activated:Connect(function() switchWalkSound("MRKRAB", MRKRAB_WALK_ID) end)
 end
 
 -- ═══════════════════════════════════════════════
--- TAB INTERFACE
+-- SETUP & CLEANUP
 -- ═══════════════════════════════════════════════
-function MusicTab.setup()
-    task.spawn(function()
-        task.wait(1)
-        MusicPlayer:init()
+local function setupConnections()
+    if not humanoid then return end
+    jumpConnection   = humanoid.Jumping:Connect(onJump)
+    runConnection    = humanoid.Running:Connect(handleWalking)
+    stateConnection  = humanoid.StateChanged:Connect(handleStateChanged)
+    heartbeatConnection = game:GetService("RunService").Heartbeat:Connect(ensureSoundPlaying)
+end
+
+local function cleanupConnections()
+    if jumpConnection   then jumpConnection:Disconnect() end
+    if runConnection    then runConnection:Disconnect() end
+    if stateConnection  then stateConnection:Disconnect() end
+    if heartbeatConnection then heartbeatConnection:Disconnect() end
+end
+
+function SFXTab.setup()
+    -- PATCH: Tunggu karakter jika belum ada
+    local function initWithCharacter(char)
+        character = char
+        humanoid = character:WaitForChild("Humanoid")
+        rootPart = character:WaitForChild("HumanoidRootPart")
+        hideDefaultSounds(character)
+        setupCustomSounds()
+        lastJumpTime = 0
+        isWalking = false
+        isJumping = false
+        cleanupConnections()
+        setupConnections()
+    end
+
+    if character then
+        initWithCharacter(character)
+    end
+
+    player.CharacterAdded:Connect(function(newChar)
+        initWithCharacter(newChar)
     end)
-    debugPrint("✅ Music Tab: Setup Complete")
+
+    print("✅ SFX Tab: Setup complete")
 end
 
-function MusicTab.cleanup()
-    if MusicPlayer.updateLoop then
-        MusicPlayer.updateLoop:Disconnect()
-        MusicPlayer.updateLoop = nil
-    end
-    if MusicPlayer.characterConn then
-        MusicPlayer.characterConn:Disconnect()
-        MusicPlayer.characterConn = nil
-    end
-    if MusicPlayer.sound then
-        MusicPlayer.sound:Stop()
-        MusicPlayer.sound:Destroy()
-        MusicPlayer.sound = nil
-    end
-    debugPrint("🧹 Music Tab: Cleanup Complete")
+function SFXTab.cleanup()
+    cleanupConnections()
+    if jumpSound then jumpSound:Destroy() end
+    if walkSound then walkSound:Destroy() end
+    print("🔇 SFX Tab cleaned up")
 end
 
-return MusicTab
+return SFXTab
