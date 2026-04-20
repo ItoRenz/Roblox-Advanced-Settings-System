@@ -98,8 +98,7 @@ end
 local MusicPlayer = {
     sound = nil,
     defaultPlaylist = {
-        {id = "rbxassetid://133857865643061", title = "Indonesia to Australia", favorite = false},
-        {id = "rbxassetid://114138177515042", title = "Where We Are", favorite = false},
+        {id = "rbxassetid://118538313029983", title = "Where We Are", favorite = false},
         {id = "rbxassetid://129988226070628", title = "DJ Nasty Girl", favorite = false},
         {id = "rbxassetid://89610760702249", title = "Stereo Love", favorite = false},
         {id = "rbxassetid://118390472006859", title = "DJ Party Shaker", favorite = false},
@@ -107,6 +106,18 @@ local MusicPlayer = {
         {id = "rbxassetid://89180400948567", title = "Phonk Toma", favorite = false},
         {id = "rbxassetid://116239599730544", title = "Goat", favorite = false},
         {id = "rbxassetid://135018311294635", title = "DJ Cinnamon", favorite = false},
+
+        {id = "rbxassetid://86271123924168", title = "Braziliant Phonk", favorite = false},
+        {id = "rbxassetid://70372515152488", title = "Glow of The Season", favorite = false},
+        {id = "rbxassetid://103668688012699", title = "Epic Electronic Journey", favorite = false},
+        {id = "rbxassetid://1844008189", title = "DJ Turn The Music Up", favorite = false},
+        {id = "rbxassetid://110431264669747", title = "Italian Disco Night", favorite = false},
+        {id = "rbxassetid://70610714752993", title = "Better of Alone", favorite = false},
+        {id = "rbxassetid://90456869588958", title = "Call You Mine", favorite = false},
+        {id = "rbxassetid://92725537953268", title = "Hotel Lobby", favorite = false},
+        {id = "rbxassetid://71335033796488", title = "Thought of You", favorite = false},
+        {id = "rbxassetid://90097019879904", title = "Slam The Night", favorite = false},
+        {id = "rbxassetid://133857865643061", title = "Indonesia to Australia", favorite = false},
         {id = "rbxassetid://96077163288111", title = "Kita Usahakan Lagi", favorite = false},
         {id = "rbxassetid://77533933904801", title = "Coba Coba", favorite = false},
         {id = "rbxassetid://104207837699519", title = "Tabola bale", favorite = false},
